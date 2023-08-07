@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net">
+    <diagram id="BqyOKjFYkFcxewU0UFYq" name="Page-1">
+        <mxGraphModel dx="1168" dy="479" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="S5prPmNepovJr-B-UtJl-3" value="" style="group" vertex="1" connectable="0" parent="1"/>
+                <mxCell id="S5prPmNepovJr-B-UtJl-2" value="" style="group" vertex="1" connectable="0" parent="S5prPmNepovJr-B-UtJl-3"/>
+                
+                <!-- Layer 1 - Red -->
+                <mxCell id="lzoVQkRJwJAd2fqr_Ge_" value="Reactive Monitoring" style="shape=parallelogram;whiteSpace=wrap;html=1;fixedSize=0;fillColor=#f44336;" vertex="1" parent="S5prPmNepovJr-B-UtJl-2">
+                    <mxGeometry x="230" y="500" width="360" height="60" as="geometry"/>
+                </mxCell>
+                
+                <!-- Layer 2 - Orange -->
+                <mxCell id="lzoVQkRJwJAd2fqr_Ge_-2" value="Basic Observability" style="shape=parallelogram;whiteSpace=wrap;html=1;fixedSize=0;fillColor=#FF9800;" vertex="1" parent="S5prPmNepovJr-B-UtJl-2">
+                    <mxGeometry x="210" y="410" width="400" height="60" as="geometry"/>
+                </mxCell>
+                
+                <!-- Layer 3 - Yellow -->
+                <mxCell id="lzoVQkRJwJAd2fqr_Ge_-3" value="Advanced Observability" style="shape=parallelogram;whiteSpace=wrap;html=1;fixedSize=0;fillColor=#FFEB3B;" vertex="1" parent="S5prPmNepovJr-B-UtJl-2">
+                    <mxGeometry x="190" y="320" width="440" height="60" as="geometry"/>
+                </mxCell>
+                
+                <!-- Layer 4 - Green -->
+                <mxCell id="lzoVQkRJwJAd2fqr_Ge_-4" value="Proactive Analysis &amp; Prediction" style="shape=parallelogram;whiteSpace=wrap;html=1;fixedSize=0;fillColor=#4CAF50;" vertex="1" parent="S5prPmNepovJr-B-UtJl-2">
+                    <mxGeometry x="170" y="230" width="480" height="60" as="geometry"/>
+                </mxCell>
+                
+                <!-- Layer 5 - Blue -->
+                <mxCell id="lzoVQkRJwJAd2fqr_Ge_-5" value="Full Observability Culture" style="shape=parallelogram;whiteSpace=wrap;html=1;fixedSize=0;fillColor=#2196F3;" vertex="1" parent="S5prPmNepovJr-B-UtJl-2">
+                    <mxGeometry x="150" y="140" width="520" height="60" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
