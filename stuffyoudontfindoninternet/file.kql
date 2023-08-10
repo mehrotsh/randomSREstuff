@@ -17,3 +17,10 @@ Perf
     | summarize arg_max(TimeGenerated, *) by ContainerID
 ) on ContainerID
 
+
+
+KubePodInventory
+| where TimeGenerated > ago(1h)
+| project ContainerName, PodName, Namespace, ContainerCPURequestsCores = todouble(ContainerCPURequests) / 1000, ContainerCPULimitsCores = todouble(ContainerCPULimits) / 1000
+| order by ContainerName asc
+
