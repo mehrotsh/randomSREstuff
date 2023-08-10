@@ -7,3 +7,13 @@ Perf
     | summarize by ContainerID, ContainerName, PodName, Namespace, ContainerCreationTimeStamp, ContainerStatus, Reason, ContainerCpuRequests
 ) on ContainerID
 | project ContainerName, PodName, Namespace, AvgCPUUsage, ContainerCpuRequests
+
+
+Perf
+| where ObjectName == "K8SContainer"
+| extend ContainerID = tostring(split(InstanceName, '/', 9)[0])
+| join kind=inner (
+    KubePodInventory
+    | summarize arg_max(TimeGenerated, *) by ContainerID
+) on ContainerID
+
