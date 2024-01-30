@@ -1,0 +1,62 @@
+
+
+What is the primary benefit of using multi-stage builds in Docker?
+
+A) Faster build times
+B) Smaller image sizes (Correct)
+C) Compatibility with more operating systems
+D) Enhanced security features
+Which of the following is a daemonless tool for building container images?
+
+A) Docker
+B) OCI
+C) Buildah (Correct)
+D) Kubernetes
+Kaniko is used for:
+
+A) Orchestrating container deployment
+B) Managing cloud resources
+C) Building container images in a Kubernetes environment (Correct)
+D) Automating the deployment process
+What does the Jib plugin primarily focus on?
+
+A) Building .NET applications
+B) Managing Kubernetes clusters
+C) Building optimized Docker and OCI images for Java applications (Correct)
+D) Continuous integration/continuous deployment
+Podman is an alternative to which tool?
+
+A) Jenkins
+B) Docker (Correct)
+C) Git
+D) Ansible
+Which of the following is not a feature of OCI images?
+
+A) Standard format for container images
+B) Portability across different container runtimes
+C) Built-in orchestration capabilities (Correct)
+D) Compatibility with Docker
+What makes Jib unique for Java application containerization?
+
+A) It requires a Docker daemon
+B) It only works with Maven, not Gradle
+C) It does not require a Docker daemon (Correct)
+D) It is only compatible with certain Java versions
+In a multi-stage Docker build, what is typically done in the first stage?
+
+A) Removing unnecessary files
+B) Compiling and building the application (Correct)
+C) Running the application
+D) Performing unit tests
+What is the main role of the Cloud Native Computing Foundation (CNCF)?
+
+A) Developing hardware for cloud computing
+B) Providing financial assistance to tech startups
+C) Fostering the growth of cloud-native technologies (Correct)
+D) Regulating cloud service providers
+As of the latest updates, which area is NOT directly addressed by CNCF projects?
+
+A) Container orchestration
+B) Serverless architectures
+C) Hhardware development (Correct)
+D) Cloud native networking
