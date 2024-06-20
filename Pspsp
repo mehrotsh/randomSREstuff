@@ -1,0 +1,11 @@
+$username = "domain\username"
+$password = "password"
+$driveLetter = "Z:"
+$networkPath = "\\Server\Share"
+
+$scriptBlock = {
+    param($driveLetter, $networkPath, $username, $password)
+    net use $driveLetter $networkPath /user:$username $password
+}
+
+Invoke-Command -ScriptBlock $scriptBlock -ArgumentList $driveLetter, $networkPath, $username, $password
