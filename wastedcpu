@@ -1,0 +1,9 @@
+((100 * 
+  sum(label_replace(sum(container_cpu_usage_seconds_total{container!="POD",container!=""}) / 1000000000, "exported_pod", "$1", "pod_name", "(.*)"))
+  /
+  sum(
+    sum(kube_pod_container_resource_requests{resource="cpu"}) by (exported_pod)
+    * on (exported_pod) group_left() 
+    (sum(kube_pod_status_phase{phase="Running"}) by (exported_pod) == 1)
+  )
+) - 100) * -1
