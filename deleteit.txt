@@ -1,0 +1,2 @@
+StatefulSets are designed to manage stateful applications, making them suitable when using PVCs. Each Prometheus pod in a StatefulSet gets its own PVC, which is bound to the pod even after it's rescheduled or restarted. This ensures that the data is preserved when the pod is moved or restarted.
+In contrast, Deployments are better suited for stateless applications. If a Prometheus pod running under a Deployment were to restart or reschedule, it might get a different pod identity, and the PVC might not correctly rebind, leading to potential data loss or corruption.
