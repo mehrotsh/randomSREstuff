@@ -1,0 +1,63 @@
+# convert_json_to_csv.py
+import json
+import csv
+import sys
+
+def convert_json_to_csv(json_data, csv_file):
+    """
+    Convert JSON data to CSV format
+    
+    Args:
+        json_data (str): JSON string data
+        csv_file (str): Path to output CSV file
+    """
+    try:
+        # Parse JSON data
+        data = json.loads(json_data)
+        
+        # Ensure data is a list of dictionaries
+        if not isinstance(data, list):
+            data = [data]
+            
+        # Extract headers from all objects
+        headers = set()
+        for item in data:
+            headers.update(item.keys())
+        headers = sorted(list(headers))
+        
+        # Write to CSV
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(data)
+            
+        print(f"Successfully converted JSON data to {csv_file}")
+        
+    except Exception as e:
+        print(f"Error converting data: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python convert_json_to_csv.py <output_csv>")
+        sys.exit(1)
+        
+    # Read JSON from stdin
+    json_data = sys.stdin.read()
+    convert_json_to_csv(json_data, sys.argv[1])
+
+# .gitlab-ci.yml
+stages:
+  - generate_and_convert
+
+generate_and_convert:
+  stage: generate_and_convert
+  script:
+    # Run your JSON-generating script and pipe output directly to the converter
+    - python your_json_generator_script.py | python convert_json_to_csv.py output.csv
+  artifacts:
+    paths:
+      - output.csv
+    reports:
+      csv: output.csv
+    expire_in: 1 month
