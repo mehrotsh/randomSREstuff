@@ -1,0 +1,5 @@
+topk(10, 
+  sum(increase(container_cpu_cfs_throttled_periods_total{namespace="your-namespace"}[1h]) 
+  / increase(container_cpu_cfs_periods_total{namespace="your-namespace"}[1h]) * 100) 
+  by (namespace, pod)
+)
