@@ -6,3 +6,7 @@ topk(10,
 
 
 sum(kube_pod_container_status_terminated_reason{reason="OOMKilled"}) by (namespace, pod, container)
+
+
+rate(container_memory_failures_total{pod="<pod-name>", namespace="<namespace>"}[3h])
+sum(rate(container_memory_failures_total{pod="nginx-pod", namespace="default"}[3h])) by (container)
