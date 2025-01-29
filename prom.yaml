@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ama-metrics-settings-configmap
+  namespace: kube-system
+data:
+  settings: |
+    prometheus-config: |
+      global:
+        scrape_interval: 1m
+      scrape_configs:
+      # Endpoints role configuration
+      - job_name: 'kubernetes-endpoints'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: ['namespace1', 'namespace2']
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_service_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+
+      # Service role configuration
+      - job_name: 'kubernetes-services'
+        kubernetes_sd_configs:
+        - role: service
+          namespaces:
+            names: ['namespace1', 'namespace2']
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_service_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+
+      # Pod role configuration
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names: ['namespace1', 'namespace2']
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+
+      # Node role configuration
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+        relabel_configs:
+        # For nodes, we filter based on pods/services in the target namespaces
+        - source_labels: [__meta_kubernetes_node_name]
+          action: replace
+          target_label: kubernetes_node
+
+      # Ingress role configuration
+      - job_name: 'kubernetes-ingresses'
+        kubernetes_sd_configs:
+        - role: ingress
+          namespaces:
+            names: ['namespace1', 'namespace2']
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_ingress_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
