@@ -55,3 +55,18 @@ sum by (node, pod) (
 * on (pod)
 group_left(owner_name) 
 max by (pod, owner_name) (kube_pod_owner{owner_kind="DaemonSet"})
+
+sum by (node, owner_name) (
+  container_memory_working_set_bytes{container!="POD"} 
+  * on (pod) 
+  group_left(owner_name) 
+  kube_pod_owner{owner_kind="DaemonSet"}
+)
+
+sum by (node, owner_name) (
+  container_memory_working_set_bytes{container!="POD"} 
+  * on (pod) 
+  group_left(owner_name) 
+  kube_pod_owner{owner_kind="DaemonSet"}
+) / 1024 / 1024 / 1024
+
