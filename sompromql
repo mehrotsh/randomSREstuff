@@ -1,11 +1,14 @@
-sum by (owner_name, namespace) (
-  kube_pod_container_resource_requests{resource="memory"} * on(pod, namespace) 
-  group_left(owner_kind, owner_name) 
+sum by (daemonset, namespace) (
+  kube_pod_container_resource_requests{resource="memory"} * on(pod, namespace)
+  group_left(daemonset) 
   kube_pod_owner{owner_kind="DaemonSet"}
 )
 
-sum(
+sum by (owner_name, namespace) (
   kube_pod_container_resource_requests{resource="memory"} * on(pod, namespace) 
-  group_left(owner_kind, owner_name) 
-  kube_pod_owner{owner_kind="DaemonSet"}
+  group_right 
+  label_replace(
+    kube_pod_owner{owner_kind="DaemonSet"},
+    "pod", "$1", "pod", "(.+)"
+  )
 )
