@@ -42,3 +42,16 @@ sum by (node, daemonset) (
   kube_pod_owner{owner_kind="DaemonSet"}
 ) / on(node) group_left node_memory_MemTotal_bytes * 100
 
+sum by (instance) (
+  sum by (pod) (container_memory_working_set_bytes{container!=""})
+  * on (pod)
+  group_left
+  kube_pod_owner{owner_kind="DaemonSet"}
+)
+
+sum by (node, pod) (
+  container_memory_working_set_bytes{container!=""}
+) 
+* on (pod)
+group_left(owner_name) 
+max by (pod, owner_name) (kube_pod_owner{owner_kind="DaemonSet"})
