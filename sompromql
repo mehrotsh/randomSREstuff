@@ -12,3 +12,11 @@ sum by (owner_name, namespace) (
     "pod", "$1", "pod", "(.+)"
   )
 )
+
+
+sum by (namespace, daemonset) (
+  sum by (namespace, pod) (kube_pod_container_resource_requests{resource="memory"})
+  * on (namespace, pod)
+  group_left(daemonset)
+  max by (namespace, pod, daemonset) (kube_pod_owner{owner_kind="DaemonSet"})
+)
