@@ -20,3 +20,25 @@ sum by (namespace, daemonset) (
   group_left(daemonset)
   max by (namespace, pod, daemonset) (kube_pod_owner{owner_kind="DaemonSet"})
 )
+
+sum by (node, daemonset) (
+  container_memory_working_set_bytes{container!=""}
+  * on(pod, namespace)
+  group_left(daemonset)
+  kube_pod_owner{owner_kind="DaemonSet"}
+)
+
+sum by (node, daemonset) (
+  container_memory_working_set_bytes{container!=""}
+  * on(pod, namespace)
+  group_left(daemonset)
+  kube_pod_owner{owner_kind="DaemonSet"}
+) / 1024 / 1024 / 1024
+
+sum by (node, daemonset) (
+  container_memory_working_set_bytes{container!=""}
+  * on(pod, namespace)
+  group_left(daemonset)
+  kube_pod_owner{owner_kind="DaemonSet"}
+) / on(node) group_left node_memory_MemTotal_bytes * 100
+
