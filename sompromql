@@ -70,3 +70,16 @@ sum by (node, owner_name) (
   kube_pod_owner{owner_kind="DaemonSet"}
 ) / 1024 / 1024 / 1024
 
+sum by (node_name, daemonset_name) (
+  sum without(container, id, image, pod_name) (
+    container_memory_working_set_bytes{container!="POD"}
+  ) * on (pod) group_left(daemonset_name) (
+    label_replace(
+      count by (pod, owner_name) (kube_pod_owner{owner_kind="DaemonSet"}),
+      "daemonset_name",
+      "$1",
+      "owner_name",
+      "(.+)"
+    )
+  )
+)
