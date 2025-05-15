@@ -1,1 +1,516 @@
 
+Grafana Alloy Configurations for Centralized Observability with Enrichment and Filtering
+This guide provides configurations for a two-tiered Grafana Alloy setup designed for centralized observability. The first tier, an Alloy agent deployed on the application side, enriches telemetry signals (metrics, traces, and logs) with metadata. These enriched signals are then forwarded to a central Alloy instance, which acts as a gatekeeper, filtering out any signals that haven't been properly enriched.
+Key Concepts:
+ * Application-Side Alloy Agent: Collects signals locally, injects metadata (e.g., environment, region, application name), and forwards them.
+ * Central Alloy Instance: Receives signals from various application-side agents, validates the presence of required metadata, and drops signals that don't meet the criteria. It then forwards valid signals to your backend observability platforms (e.g., Grafana Loki, Grafana Mimir, Grafana Tempo, or Grafana Cloud).
+ * Metadata Enrichment: Adding key-value pairs (tags/labels/attributes) to telemetry data to provide context.
+ * Ingestion Filtering: Selectively dropping telemetry data based on certain criteria, in this case, the absence of enrichment tags.
+Application-Side Alloy Agent Configuration
+This agent is responsible for collecting telemetry, enriching it with metadata, and forwarding it to the Central Alloy Instance.
+Assumptions:
+ * Your application and other services expose metrics in Prometheus format.
+ * Your application uses OpenTelemetry SDK for traces and potentially logs.
+ * Logs are also collected from local files.
+ * The Central Alloy Instance is reachable at central-alloy-address:4317 (for OTLP gRPC).
+config.alloy (Application-Side Agent):
+// ----------------------------------------------------------------------------
+// Define common metadata for enrichment
+// ----------------------------------------------------------------------------
+discovery.process "common_metadata" {
+  // Static metadata. These could also come from environment variables,
+  // a local file, or an instance metadata service.
+  forward_to = [otelcol.processor.attributes.add_common_metadata.input]
+
+  // Example static attributes:
+  // Replace these with your actual environment details.
+  // These will be added to all signals passing through the
+  // 'otelcol.processor.attributes.add_common_metadata' component.
+  declare "static_attributes" {
+    "environment"   = "production"
+    "deployment.region" = "us-east-1"
+    "application.name" = "my-awesome-app"
+    "commit.sha" = env("GIT_COMMIT_SHA") // Example: Read from an environment variable
+  }
+
+  // This block is a placeholder to trigger the processing.
+  // In a real scenario, you might use discovery.file or another
+  // discovery component if your metadata is dynamic per instance.
+  // For purely static metadata as above, this simple setup works.
+  // We are essentially creating a dummy target to carry these attributes.
+  targets = [{"__alloy_meta__" = "common"}]
+
+  // The 'otelcol.processor.attributes' below will use these.
+  // We are not directly using a relabel here but setting up for the attributes processor.
+}
+
+// ----------------------------------------------------------------------------
+// Receivers for various signals
+// ----------------------------------------------------------------------------
+
+// OTLP Receiver (for traces from OpenTelemetry SDK, and potentially logs/metrics)
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    metrics = [otelcol.processor.attributes.add_common_metadata.input]
+    logs    = [otelcol.processor.attributes.add_common_metadata.input]
+    traces  = [otelcol.processor.attributes.add_common_metadata.input]
+  }
+}
+
+// Prometheus Receiver (for scraping metrics)
+prometheus.scrape "default" {
+  targets    = [
+    // Example: Scrape metrics from the application itself if it exposes a /metrics endpoint
+    {"__address__" = "localhost:8080", "job" = "myapplication"},
+    // Add other scrape targets as needed
+  ]
+  forward_to = [otelcol.receiver.prometheus.default.receiver]
+}
+
+otelcol.receiver.prometheus "default" {
+  output {
+    metrics = [otelcol.processor.attributes.add_common_metadata.input]
+  }
+}
+
+// Loki Receiver (for scraping logs from files)
+loki.source.file "app_logs" {
+  targets    = [{"__path__" = "/var/log/app/*.log", "host" = env("HOSTNAME")}] // Example path
+  forward_to = [otelcol.receiver.loki.default.receiver]
+}
+
+// Convert Loki logs to OTel logs to go through the common pipeline
+otelcol.receiver.loki "default" {
+  output {
+    logs = [otelcol.processor.attributes.add_common_metadata.input]
+  }
+}
+
+// (Optional) Kubernetes Attributes Processor
+// Uncomment and configure if running in Kubernetes to automatically add pod/node labels, etc.
+/*
+otelcol.processor.k8sattributes "k8s" {
+  // Passthrough mode ensures that existing attributes are not overwritten.
+  // Set to 'extract' to extract specific labels/annotations as attributes.
+  passthrough = false
+  extract {
+    metadata = [
+      "k8s.pod.name",
+      "k8s.pod.uid",
+      "k8s.deployment.name",
+      "k8s.namespace.name",
+      "k8s.node.name",
+      "k8s.container.name",
+    ]
+    // Example: Extract specific labels and annotations
+    // labels = [
+    //   { key = "app.kubernetes.io/name", from = "pod", regex = "(.*)" },
+    //   { key = "app.kubernetes.io/instance", from = "pod", regex = "(.*)" },
+    // ]
+    // annotations = [
+    //   { key = "custom.annotation/owner", from = "pod", regex = "(.*)" },
+    // ]
+  }
+  // This processor would typically run before the common_metadata enrichment
+  // or its output would also feed into the common_metadata if you want to override.
+  // For simplicity here, we'll assume it runs and its output goes to the 'add_common_metadata' processor.
+  // output {
+  //   metrics = [otelcol.processor.attributes.add_common_metadata.input]
+  //   logs    = [otelcol.processor.attributes.add_common_metadata.input]
+  //   traces  = [otelcol.processor.attributes.add_common_metadata.input]
+  // }
+}
+// If using k8sattributes, the output of receivers should point to it first,
+// e.g., otelcol.receiver.otlp.default.output.metrics = [otelcol.processor.k8sattributes.k8s.input]
+*/
+
+
+// ----------------------------------------------------------------------------
+// Enrichment Processor - Adds common metadata to all signals
+// ----------------------------------------------------------------------------
+otelcol.processor.attributes "add_common_metadata" {
+  // This processor takes attributes from the 'discovery.process "common_metadata"'
+  // and applies them to incoming telemetry.
+  // The 'discovery.process' component needs a mechanism to feed its processed items
+  // into this processor's context. A more direct way with latest Alloy versions
+  // might be to use `otelcol.connector.attributes` or directly set attributes
+  // in processors if they support it.
+  // For now, we will use a different approach: directly adding attributes.
+
+  // Clear the 'actions' if using the direct attribute injection method.
+  // actions = [] // Not used if setting attributes directly from discovery.process output
+
+  // This is a conceptual representation. The actual mechanism for
+  // injecting arbitrary discovered attributes into all OTel signals
+  // might involve a custom processor or specific connectors.
+  // A simpler approach for static enrichment is:
+  actions = [
+    { key = "environment", action = "upsert", value = "production" },
+    { key = "deployment.region", action = "upsert", value = "us-east-1" },
+    { key = "application.name", action = "upsert", value = "my-awesome-app" },
+    { key = "enriched_by_app_agent", action = "upsert", value = true }, // Crucial for filtering
+    // Example of adding an attribute from an environment variable
+    { key = "commit.sha", action = "insert", value = env("APP_VERSION") == "" ? "unknown" : env("APP_VERSION") },
+  ]
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+// (Optional) Relabeling for metrics (Prometheus-style)
+// If you need more complex label manipulation for metrics before they become OTel attributes.
+/*
+prometheus.relabel "metrics_enrichment" {
+  forward_to = [otelcol.receiver.prometheus.default.receiver] // Or a specific OTel metrics pipeline stage
+
+  rule {
+    source_labels = ["__address__"]
+    target_label  = "instance_ip"
+  }
+  rule {
+    action       = "replace"
+    source_labels = ["job"]
+    target_label  = "service_name"
+    replacement  = "$1-service"
+  }
+  // This would typically be fed by prometheus.scrape and its output fed to
+  // an otelcol.receiver.prometheus or directly to an OTel processor if possible.
+  // The example above in prometheus.scrape directly forwards to otelcol.receiver.prometheus.
+  // If using this, adjust the flow:
+  // prometheus.scrape.default.forward_to = [prometheus.relabel.metrics_enrichment.receiver]
+  // prometheus.relabel.metrics_enrichment.forward_to = [otelcol.receiver.prometheus.default.receiver]
+  // And then otelcol.receiver.prometheus.default.output.metrics = [otelcol.processor.attributes.add_common_metadata.input]
+}
+*/
+
+// ----------------------------------------------------------------------------
+// Batch Processor (Recommended for performance)
+// ----------------------------------------------------------------------------
+otelcol.processor.batch "default" {
+  timeout          = "1s"
+  send_batch_size  = 8192
+  send_batch_count = 20
+  output {
+    metrics = [otelcol.exporter.otlp.central_alloy.input]
+    logs    = [otelcol.exporter.otlp.central_alloy.input]
+    traces  = [otelcol.exporter.otlp.central_alloy.input]
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Exporter - Forwards enriched signals to the Central Alloy Instance
+// ----------------------------------------------------------------------------
+otelcol.exporter.otlp "central_alloy" {
+  client {
+    endpoint = "central-alloy-address:4317" // Replace with your Central Alloy gRPC endpoint
+    // insecure = true // Use 'tls' block for secure connections in production
+    tls {
+      insecure = true // For PoC. Configure properly with CA, cert, key for production.
+    }
+    // auth block can be added here if the central instance requires authentication
+    // auth = otelcol.auth.basic.myauth.handler
+  }
+}
+
+// Example basic auth client if needed
+// otelcol.auth.basic "myauth" {
+//   username = "user"
+//   password = "password"
+// }
+
+Explanation and Enrichment Examples:
+ * otelcol.processor.attributes "add_common_metadata": This is the primary component for adding static metadata.
+   * action = "upsert": Adds the attribute if it doesn't exist, or updates it if it does.
+   * action = "insert": Adds the attribute only if it doesn't already exist.
+   * enriched_by_app_agent = true: This specific tag is crucial. The Central Alloy Instance will use this tag to identify enriched signals.
+   * Logs: Log records passing through this processor will have these attributes added. If logs come in OTLP format, these are resource or log record attributes. If converted from Loki, they become attributes on the OTel log record.
+   * Metrics: Metric data points will have these attributes associated with them. In Prometheus, these become labels. In OTLP, they are resource or metric attributes.
+   * Traces: Spans within traces will inherit these attributes, typically as resource attributes associated with the service sending the traces.
+ * (Optional) otelcol.processor.k8sattributes "k8s": If running in Kubernetes, this processor automatically discovers and adds Kubernetes-specific metadata like pod name, namespace, deployment name, labels, and annotations to all signals. This is a very powerful way to enrich signals with their K8s context.
+ * (Optional) prometheus.relabel "metrics_enrichment": For metrics scraped by prometheus.scrape, you can use relabeling rules to modify or add labels before they are converted to OTel metrics. This is useful for standardizing metric labels.
+ * Environment Variables for Dynamic Values: Using env("ENV_VAR_NAME") allows you to inject values set in the agent's environment (e.g., APP_VERSION, HOSTNAME).
+ * Forwarding: All enriched signals are batched by otelcol.processor.batch and then exported via otelcol.exporter.otlp to the configured Central Alloy Instance.
+Central Alloy Instance Configuration
+This agent receives signals from one or more Application-Side Alloy Agents and filters them based on the presence of the enriched_by_app_agent tag.
+Assumptions:
+ * Listens for OTLP signals on 0.0.0.0:4317 (gRPC).
+ * Forwards valid signals to backend systems (e.g., Grafana Cloud OTLP endpoint).
+config.alloy (Central Alloy Instance):
+// ----------------------------------------------------------------------------
+// Receiver - Accepts OTLP signals from Application-Side Agents
+// ----------------------------------------------------------------------------
+otelcol.receiver.otlp "from_app_agents" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+    // Add TLS and auth settings here if the app-side agent is configured to use them
+  }
+  // http { // Optionally enable HTTP receiver as well
+  //   endpoint = "0.0.0.0:4318"
+  // }
+  output {
+    metrics = [otelcol.processor.filter.enrichment_check.input]
+    logs    = [otelcol.processor.filter.enrichment_check.input]
+    traces  = [otelcol.processor.filter.enrichment_check.input]
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Filter Processor - Gatekeeper for incoming signals
+// ----------------------------------------------------------------------------
+otelcol.processor.filter "enrichment_check" {
+  // For Metrics:
+  metrics {
+    // We need to check resource attributes or metric attributes.
+    // This example checks for the presence of the 'enriched_by_app_agent' resource attribute.
+    // Adjust 'include' or 'exclude' based on actual attribute location (resource vs. data point).
+    // Using a 'strict' include means only metrics WITH this attribute pass.
+    // If the attribute is on the metric datapoint itself, the syntax might differ or require a different processor.
+    // For resource attributes, this should generally work.
+    // An alternative is to use 'otelcol.processor.transform' for more complex logic.
+
+    // This example will KEEP metrics that have the attribute.
+    // To DROP metrics that LACK the attribute, you'd use an 'exclude' with a 'match_type' of 'regexp'
+    // and a regex that matches if the attribute is NOT present or not true.
+    // Simpler: if `enriched_by_app_agent` is not `true`, then drop.
+    // The 'filter' processor is more about presence/absence of attributes or matching values.
+
+    // Let's configure it to DROP signals if the tag is NOT present.
+    // This requires checking for the absence of the attribute or that its value is not 'true'.
+    // The 'otelcol.processor.filter' might be limited for "if NOT X then drop".
+    // A common way is to use it with 'otelcol.routing' or 'otelcol.processor.transform'.
+
+    // Using 'otelcol.processor.transform' for more explicit filtering logic:
+    // (This component is more flexible for conditional dropping)
+    // For now, let's assume 'otelcol.processor.filter' can achieve this with careful configuration.
+    // If not, `otelcol.processor.transform` or `otelcol.processor.groupbyattrs` (to route non-compliant
+    // signals to a "drop" exporter) would be better.
+
+    // Attempting with 'otelcol.processor.filter' to drop if attribute is missing or not 'true'.
+    // This will drop the metric if 'enriched_by_app_agent' is not exactly 'true'.
+    metric_include = {
+      match_type = "strict"
+      attributes = [
+        { key = "enriched_by_app_agent", value = true }
+      ]
+    }
+    // If 'metric_include' is used, only metrics matching it are kept. Others are dropped.
+  }
+
+  // For Logs:
+  logs {
+    // This will drop the log if 'enriched_by_app_agent' attribute is not present and 'true'.
+    log_include = {
+      match_type = "strict"
+      attributes = [ // Checks resource attributes
+        { key = "enriched_by_app_agent", value = true }
+      ]
+      // body = [] // can also filter on log body
+      // severity_number = {}
+    }
+    // If 'log_include' is used, only logs matching it are kept. Others are dropped.
+  }
+
+  // For Traces:
+  traces {
+    // This will drop the trace if 'enriched_by_app_agent' is not present and 'true' on a resource attribute.
+    // Note: This filters whole traces if any span in a batch lacks the attribute at the resource level.
+    // More granular span filtering might need 'otelcol.processor.span'.
+    span_include = { // This applies to individual spans. Resource attributes are typically on all spans from a resource.
+      match_type = "strict"
+      attributes = [ // Checks span attributes. For resource attributes, it's implicitly checked.
+        { key = "enriched_by_app_agent", value = true } // This assumes the attribute is propagated to spans or is a resource attribute.
+      ]
+    }
+    // If 'span_include' is used, only spans matching it are kept. Others are dropped.
+  }
+
+  // Define where the filtered (kept) signals go
+  output {
+    metrics = [otelcol.processor.batch.to_backend.input] // Send to a batch processor before final export
+    logs    = [otelcol.processor.batch.to_backend.input]
+    traces  = [otelcol.processor.batch.to_backend.input]
+  }
+
+  // To explicitly drop signals that don't match the 'include' criteria,
+  // the 'otelcol.processor.filter' implicitly does this.
+  // If you wanted to route dropped signals elsewhere (e.g., to a debug log),
+  // you would need a more complex setup, possibly with 'otelcol.connector.router'.
+}
+
+
+// Alternative using otelcol.processor.routing and a "drop" exporter (more explicit for dropping)
+/*
+otelcol.exporter.otlp "drop_exporter" {
+  client {
+    endpoint = "localhost:1" // A non-existent endpoint, effectively dropping data.
+    // Or use otelcol.exporter.debug for logging dropped items if needed for testing.
+  }
+}
+
+otelcol.connector.routing "router" {
+  input_selectors = ["otelcol.receiver.otlp.from_app_agents.output"] // Hypothetical syntax
+  output_routes = {
+    // If attribute exists and is true, send to main pipeline
+    'attributes["enriched_by_app_agent"] == true': [otelcol.processor.batch.to_backend.input],
+    // Otherwise, send to drop exporter
+    'attributes["enriched_by_app_agent"] != true OR attributes["enriched_by_app_agent"] == nil': [otelcol.exporter.otlp.drop_exporter.input],
+  }
+  // This routing logic is highly conceptual for Alloy.
+  // Grafana Alloy might use `otelcol.processor.filter` with distinct include/exclude rules,
+  // or a series of processors. The `otelcol.filter` above is the more direct approach.
+  // For complex conditional logic and dropping, a Lua script in `otelcol.processor.script` could also be an option.
+}
+*/
+
+
+// ----------------------------------------------------------------------------
+// Batch Processor (Recommended for performance before sending to backend)
+// ----------------------------------------------------------------------------
+otelcol.processor.batch "to_backend" {
+  timeout          = "1s"
+  send_batch_size  = 8192
+  send_batch_count = 20
+  output {
+    metrics = [otelcol.exporter.otlp.grafana_cloud.input] // Example: send to Grafana Cloud
+    logs    = [otelcol.exporter.otlp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlp.grafana_cloud.input]
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Exporter - Forwards valid, enriched signals to the final backend(s)
+// ----------------------------------------------------------------------------
+
+// Example: Exporting to Grafana Cloud
+otelcol.exporter.otlp "grafana_cloud" {
+  client {
+    endpoint = env("GRAFANA_OTLP_ENDPOINT") // e.g., "https://otlp-gateway-prod-us-central-0.grafana.net/otlp"
+    auth     = otelcol.auth.basic.grafana_cloud_auth.handler
+    // tls block can be used if default system CAs are not sufficient
+  }
+}
+
+otelcol.auth.basic "grafana_cloud_auth" {
+  username = env("GRAFANA_INSTANCE_ID")
+  password = env("GRAFANA_CLOUD_API_KEY")
+}
+
+// Example: Exporting logs to a Loki instance
+/*
+loki.write "to_loki" {
+  endpoint {
+    url = "http://loki-address:3100/loki/api/v1/push"
+  }
+  // External labels can be added here if needed
+  // external_labels = {
+  //   source = "central_alloy"
+  // }
+}
+// If using loki.write for logs, the logs output from batch processor would be:
+// otelcol.processor.batch.to_backend.output.logs = [loki.write.to_loki.receiver]
+// This requires logs to be in Loki format. If they are OTel logs, you might need
+// an otelcol.exporter.loki, or ensure the batch processor outputs logs
+// in a format consumable by loki.write, or convert them.
+// otelcol.exporter.loki "to_loki_otel" {
+//   endpoint = "http://loki-address:3100/loki/api/v1/push"
+// }
+// otelcol.processor.batch.to_backend.output.logs = [otelcol.exporter.loki.to_loki_otel.input]
+*/
+
+// Example: Exporting metrics to a Prometheus Remote Write endpoint (e.g., Grafana Mimir)
+/*
+prometheus.remote_write "to_mimir" {
+  endpoint {
+    url = "http://mimir-address/api/v1/push"
+    // Add auth, tls config as needed
+  }
+  // Wal_truncate_frequency can be adjusted
+}
+// If using prometheus.remote_write for metrics:
+// otelcol.processor.batch.to_backend.output.metrics = [prometheus.remote_write.to_mimir.receiver]
+*/
+
+Explanation and Filtering Logic:
+ * otelcol.receiver.otlp "from_app_agents": Receives all incoming signals from the application-side agents.
+ * otelcol.processor.filter "enrichment_check": This is the gatekeeper.
+   * It inspects metrics, logs, and traces for the presence and value of the enriched_by_app_agent attribute.
+   * metric_include, log_include, and span_include with match_type = "strict" and the specified attribute ensure that only signals containing enriched_by_app_agent = true are passed through. All other signals are implicitly dropped by this processor configuration.
+   * The filter checks attributes. For OTLP, enrichment tags are typically resource attributes (for all signals from a resource) or attributes on individual data points (spans, log records, metric data points). The example assumes enriched_by_app_agent is available as an attribute that the filter processor can inspect.
+ * Alternative Filtering Consideration: If otelcol.processor.filter proves insufficient for complex "drop if not present or not true" logic (especially across different signal types or attribute locations), you might explore:
+   * otelcol.processor.transform: Allows for more complex attribute manipulation and conditional logic using the OpenTelemetry Transformation Language (OTTL). You could use OTTL to set a temporary attribute based on your condition and then use otelcol.processor.filter to drop based on that temporary attribute.
+   * otelcol.processor.groupbyattrs or otelcol.connector.routing (conceptual): These could be used to route signals lacking the required tag to a "drop" exporter (e.g., an otelcol.exporter.otlp pointing to a non-existent endpoint or otelcol.exporter.debug). This provides a more explicit dropping mechanism. The provided configuration primarily relies on the implicit drop behavior of otelcol.processor.filter when an include condition is not met.
+ * Batching and Exporting: Valid signals are batched by otelcol.processor.batch "to_backend" and then exported to your chosen backends (e.g., Grafana Cloud via otelcol.exporter.otlp, or specific exporters for Loki, Mimir/Prometheus).
+Suggestions for Enriching Signals
+General Principles:
+ * Consistency: Use consistent naming conventions for your metadata tags across all signal types.
+ * Relevance: Add tags that provide actionable context for querying, alerting, and dashboarding.
+ * Cardinality: Be mindful of high-cardinality tags (tags with many unique values, like user_id on every log line for every user), especially for metrics, as they can impact storage and query performance in some backends. Resource-level attributes are generally safer.
+Examples of Enrichment Tags:
+ * Environment Identification:
+   * environment: "dev", environment: "staging", environment: "production"
+   * k8s.cluster.name: "my-prod-cluster"
+ * Deployment and Location:
+   * deployment.region: "eu-west-1", availability_zone: "us-east-1a"
+   * data_center: "dc-01"
+   * host.name: "appserver-123" (often added by default by collectors)
+   * k8s.node.name: "node-xyz"
+ * Application and Service Identification:
+   * application.name: "user-service", service.name: "user-service" (OpenTelemetry semantic convention)
+   * service.version: "1.2.3", commit.sha: "abcdef123"
+   * process.id: "12345"
+   * k8s.deployment.name: "frontend-app", k8s.pod.name: "frontend-app-xzy"
+ * Business Context (use judiciously):
+   * tenant.id: "customer-abc" (be careful with cardinality)
+   * feature.flag: "new-checkout-flow"
+ * Operational Context:
+   * source: "cdn-logs", source: "application-logs"
+   * pipeline.stage: "ingestion", pipeline.stage: "processed"
+   * enriched_by_app_agent: true (as used in the example for filtering)
+Enriching Logs:
+ * Add tags as key-value pairs within the log structure if sending structured logs (e.g., JSON).
+ * If using OTLP for logs, these become attributes of the LogRecord.
+ * Example log line (conceptual JSON):
+   {
+  "timestamp": "2025-05-15T10:30:00Z",
+  "level": "INFO",
+  "message": "User logged in successfully",
+  "user.id": "someuser123", // Potentially high cardinality - be careful
+  // Enriched tags:
+  "environment": "production",
+  "application.name": "auth-service",
+  "deployment.region": "us-east-1",
+  "enriched_by_app_agent": true
+}
+
+Enriching Metrics:
+ * Tags become labels in Prometheus/Mimir or attributes in OTLP metrics.
+ * These are attached to every data point for a given metric.
+ * Example Prometheus metric:
+   http_requests_total{job="my-awesome-app", method="GET", status_code="200", environment="production", deployment_region="us-east-1", application_name="my-awesome-app", enriched_by_app_agent="true"} 1027
+Enriching Traces:
+ * Tags are typically added as resource attributes (applying to all spans from a service instance) or span attributes (specific to an individual span/operation).
+ * Resource attributes are ideal for environment, application name, region, etc.
+ * Span attributes can provide context for a specific operation, like http.method, db.statement, user.id (again, be mindful of cardinality for span attributes if they are indexed for search).
+ * Example OTLP Trace (conceptual attributes on a Span or its Resource):
+   Span Name: "HTTP GET /api/users"
+Resource Attributes:
+  service.name: "user-api"
+  environment: "production"
+  deployment.region: "us-east-1"
+  application.name: "user-api"
+  enriched_by_app_agent: true
+Span Attributes:
+  http.method: "GET"
+  http.status_code: 200
+  http.target: "/api/users"
+
+By implementing this two-tiered Alloy setup with strategic enrichment and filtering, you can ensure that your central observability platform receives well-contextualized and validated telemetry data, leading to more efficient monitoring, troubleshooting, and analysis. Remember to adapt the configurations and enrichment tags to your specific environment and requirements.
