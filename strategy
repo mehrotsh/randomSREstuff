@@ -1,0 +1,73 @@
+GitLab Story: AKS-Specific Alloy Agent Deployment Implementation
+Story Details
+Epic: LGTM Stack Implementation
+Story Type: Feature
+Story Points: 21
+Priority: High
+Assignee: DevOps Engineering Team
+User Story
+As a DevOps Engineer managing Kubernetes workloads
+I want specialized Alloy agent deployment patterns optimized for Azure Kubernetes Service
+So that I can efficiently collect observability data from containerized applications with native AKS integrations
+Acceptance Criteria
+Must Have
+
+ AKS-optimized Helm charts with Azure-specific configurations
+ Integration with Azure Monitor and Azure Log Analytics (optional path)
+ AKS-native service discovery and auto-configuration
+ Azure Active Directory integration for authentication
+ Network policy templates for AKS networking
+ Azure Key Vault integration for secrets management
+ Horizontal Pod Autoscaler configuration for agent scaling
+ AKS cluster upgrade compatibility testing
+ Integration with Azure Container Insights (migration path)
+
+Should Have
+
+ Azure Policy integration for governance and compliance
+ Cost optimization with Azure Spot node pools
+ Integration with Azure Arc for hybrid scenarios
+ AKS diagnostic settings integration
+ Azure Resource Manager (ARM) template for infrastructure
+ Terraform modules for infrastructure as code
+
+Could Have
+
+ Integration with Azure DevOps pipelines
+ Azure Cost Management integration for observability cost tracking
+ Azure Security Center integration for vulnerability scanning
+ Azure Advisor integration for optimization recommendations
+=============================================================================================
+Story 2: Azure VM Alloy Agent Deployment Strategy
+Epic: LGTM Stack Implementation
+Story: Implement Azure VM Alloy Agent Deployment
+Priority: High
+Story Points: 13
+As an application team running services on Azure VMs
+I want a standardized way to deploy and configure Alloy agents
+So that I can easily send telemetry data to the centralized LGTM stack
+Acceptance Criteria:
+
+ Create Azure Resource Manager (ARM) templates for agent deployment
+ Develop PowerShell/Bash scripts for automated installation
+ Implement configuration management using Azure App Configuration or Key Vault
+ Create service definition for Windows Service/systemd daemon
+ Establish log rotation and agent self-monitoring
+ Document firewall and network security requirements
+
+Technical Deliverables:
+
+ARM template for VM agent deployment
+Installation scripts (Windows PowerShell + Linux Bash)
+Systemd service file and Windows service wrapper
+Configuration management integration
+Health check endpoints and monitoring configuration
+
+Definition of Done:
+
+ Templates tested on Windows and Linux VMs
+ Agent successfully sends data to development LGTM stack
+ Configuration updates work without agent restart
+ Documentation completed with troubleshooting guide
+
+
