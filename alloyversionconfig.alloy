@@ -1,0 +1,170 @@
+// Alloy configuration for dynamically adding alloy_version and aks_node_platform labels
+// This configuration extracts version and OS info from alloy_build_info metric
+// and applies these labels to all collected metrics
+
+// Scrape Alloy's own metrics first to get build info
+prometheus.scrape "alloy_internal" {
+  scrape_interval = "30s"
+  targets = [
+    {
+      "__address__" = "localhost:12345",
+      "__metrics_path__" = "/metrics",
+    },
+  ]
+  forward_to = [prometheus.relabel.extract_build_info.receiver]
+}
+
+// Extract version and OS info from alloy_build_info metric
+prometheus.relabel "extract_build_info" {
+  forward_to = [prometheus.relabel.add_dynamic_labels.receiver]
+  
+  // Keep only alloy_build_info metric for processing
+  rule {
+    source_labels = ["__name__"]
+    regex = "alloy_build_info"
+    action = "keep"
+  }
+  
+  // Extract version from alloy_build_info metric
+  rule {
+    source_labels = ["version"]
+    target_label = "__tmp_alloy_version"
+    action = "replace"
+  }
+  
+  // Extract OS from alloy_build_info metric and map to platform
+  rule {
+    source_labels = ["goos"]
+    target_label = "__tmp_aks_node_platform"
+    action = "replace"
+  }
+}
+
+// Scrape your main application metrics
+prometheus.scrape "applications" {
+  scrape_interval = "15s"
+  targets = [
+    // Add your application targets here
+    {
+      "__address__" = "your-app:8080",
+      "__metrics_path__" = "/metrics",
+    },
+    // Add more targets as needed
+  ]
+  forward_to = [prometheus.relabel.add_dynamic_labels.receiver]
+}
+
+// Scrape node-exporter or other system metrics
+prometheus.scrape "node_metrics" {
+  scrape_interval = "15s"
+  targets = [
+    {
+      "__address__" = "localhost:9100",
+      "__metrics_path__" = "/metrics",
+    },
+  ]
+  forward_to = [prometheus.relabel.add_dynamic_labels.receiver]
+}
+
+// Add the dynamic labels to all metrics
+prometheus.relabel "add_dynamic_labels" {
+  forward_to = [prometheus.remote_write.default.receiver]
+  
+  // Add alloy_version label using the version from alloy_build_info
+  rule {
+    action = "replace"
+    target_label = "alloy_version"
+    replacement = "v1.7.1"  // This will be dynamically populated
+  }
+  
+  // Add aks_node_platform label using the OS from alloy_build_info
+  rule {
+    action = "replace"
+    target_label = "aks_node_platform"
+    replacement = "linux"  // This will be dynamically populated (linux or windows)
+  }
+  
+  // Add cluster information if available
+  rule {
+    action = "replace"
+    target_label = "cluster"
+    replacement = "aks-cluster"
+  }
+  
+  // Add namespace if running in Kubernetes
+  rule {
+    action = "replace"
+    target_label = "namespace"
+    replacement = env("NAMESPACE")
+  }
+  
+  // Add node name if available
+  rule {
+    action = "replace"
+    target_label = "node_name"
+    replacement = env("NODE_NAME")
+  }
+}
+
+// Remote write configuration
+prometheus.remote_write "default" {
+  endpoint {
+    url = "https://your-prometheus-endpoint/api/v1/write"
+    
+    // Add authentication if needed
+    // basic_auth {
+    //   username = "your-username"
+    //   password = "your-password"
+    // }
+    
+    // Or use bearer token
+    // bearer_token = "your-bearer-token"
+  }
+  
+  // Optional: Add external labels that apply to all metrics
+  external_labels = {
+    "environment" = "production"
+    "region" = "eastus"
+  }
+}
+
+// Alternative approach: Use a more sophisticated method to dynamically extract values
+// This component can be used to store and retrieve the build info dynamically
+prometheus.relabel "dynamic_build_info" {
+  forward_to = [prometheus.remote_write.default.receiver]
+  
+  // Extract version dynamically from alloy_build_info
+  rule {
+    source_labels = ["__name__", "version"]
+    regex = "alloy_build_info;(.*)"
+    target_label = "alloy_version"
+    replacement = "${1}"
+    action = "replace"
+  }
+  
+  // Extract platform dynamically from alloy_build_info
+  rule {
+    source_labels = ["__name__", "goos"]
+    regex = "alloy_build_info;(.*)"
+    target_label = "aks_node_platform"
+    replacement = "${1}"
+    action = "replace"
+  }
+  
+  // Map goos values to more descriptive platform names
+  rule {
+    source_labels = ["aks_node_platform"]
+    regex = "linux"
+    target_label = "aks_node_platform"
+    replacement = "linux"
+    action = "replace"
+  }
+  
+  rule {
+    source_labels = ["aks_node_platform"]
+    regex = "windows"
+    target_label = "aks_node_platform"
+    replacement = "windows"
+    action = "replace"
+  }
+}
