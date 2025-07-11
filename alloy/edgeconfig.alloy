@@ -1,0 +1,490 @@
+// config.alloy - Templated configuration for edge Alloy agents
+{{- $app := .Values.app }}
+{{- $centralEndpoint := .Values.global.centralObservability.alloyEndpoint }}
+
+// Logging configuration
+logging {
+  level  = "info"
+  format = "json"
+}
+
+// =========================================
+// SERVICE DISCOVERY
+// =========================================
+
+// Kubernetes service discovery
+discovery.kubernetes "services" {
+  role = "service"
+  {{- if .Values.app.serviceDiscovery.enabled }}
+  namespaces {
+    {{- range .Values.app.serviceDiscovery.namespaces }}
+    names = ["{{ . }}"]
+    {{- end }}
+  }
+  {{- end }}
+}
+
+discovery.kubernetes "pods" {
+  role = "pod"
+  {{- if .Values.app.serviceDiscovery.enabled }}
+  namespaces {
+    {{- range .Values.app.serviceDiscovery.namespaces }}
+    names = ["{{ . }}"]
+    {{- end }}
+  }
+  {{- end }}
+}
+
+discovery.kubernetes "endpoints" {
+  role = "endpoints"
+  {{- if .Values.app.serviceDiscovery.enabled }}
+  namespaces {
+    {{- range .Values.app.serviceDiscovery.namespaces }}
+    names = ["{{ . }}"]
+    {{- end }}
+  }
+  {{- end }}
+}
+
+// =========================================
+// METRICS COLLECTION
+// =========================================
+
+{{- if .Values.telemetry.metrics.enabled }}
+// Prometheus scraping for services with annotations
+prometheus.scrape "kubernetes_services" {
+  targets = discovery.kubernetes.services.targets
+  
+  // Standard relabeling for Kubernetes services
+  relabel_configs = [
+    // Keep only services with scrape annotation
+    {
+      source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
+      action        = "keep"
+      regex         = "true"
+    },
+    // Use custom metrics path if specified
+    {
+      source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_path"]
+      action        = "replace"
+      target_label  = "__metrics_path__"
+      regex         = "(.+)"
+    },
+    // Use custom port if specified
+    {
+      source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
+      action        = "replace"
+      regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+      replacement   = "$1:$2"
+      target_label  = "__address__"
+    },
+    // Add standard labels
+    {
+      source_labels = ["__meta_kubernetes_service_name"]
+      target_label  = "service"
+    },
+    {
+      source_labels = ["__meta_kubernetes_namespace"]
+      target_label  = "namespace"
+    },
+    // Add app-specific labels
+    {
+      target_label = "app_name"
+      replacement  = "{{ $app.name }}"
+    },
+    {
+      target_label = "app_team"
+      replacement  = "{{ $app.team }}"
+    },
+    {
+      target_label = "app_environment"
+      replacement  = "{{ $app.environment }}"
+    },
+    {
+      target_label = "app_version"
+      replacement  = "{{ $app.version }}"
+    },
+    {
+      target_label = "cluster_name"
+      replacement  = "{{ $app.cluster }}"
+    },
+    {
+      target_label = "business_unit"
+      replacement  = "{{ $app.businessUnit | default "unknown" }}"
+    },
+    {
+      target_label = "cost_center"
+      replacement  = "{{ $app.costCenter | default "unknown" }}"
+    },
+    {
+      target_label = "criticality"
+      replacement  = "{{ $app.criticality | default "medium" }}"
+    },
+    {{- range .Values.telemetry.metrics.relabelConfigs }}
+    {{ . | toYaml | nindent 4 }},
+    {{- end }}
+  ]
+  
+  scrape_interval = "{{ .Values.telemetry.metrics.interval }}"
+  
+  forward_to = [prometheus.remote_write.central.receiver]
+}
+
+// Prometheus scraping for pods with annotations
+prometheus.scrape "kubernetes_pods" {
+  targets = discovery.kubernetes.pods.targets
+  
+  relabel_configs = [
+    // Keep only pods with scrape annotation
+    {
+      source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+      action        = "keep"
+      regex         = "true"
+    },
+    // Use custom metrics path if specified
+    {
+      source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+      action        = "replace"
+      target_label  = "__metrics_path__"
+      regex         = "(.+)"
+    },
+    // Use custom port if specified
+    {
+      source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+      action        = "replace"
+      regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+      replacement   = "$1:$2"
+      target_label  = "__address__"
+    },
+    // Add standard labels
+    {
+      source_labels = ["__meta_kubernetes_pod_name"]
+      target_label  = "pod"
+    },
+    {
+      source_labels = ["__meta_kubernetes_namespace"]
+      target_label  = "namespace"
+    },
+    {
+      source_labels = ["__meta_kubernetes_pod_container_name"]
+      target_label  = "container"
+    },
+    // Add app-specific labels (same as above)
+    {
+      target_label = "app_name"
+      replacement  = "{{ $app.name }}"
+    },
+    {
+      target_label = "app_team"
+      replacement  = "{{ $app.team }}"
+    },
+    {
+      target_label = "app_environment"
+      replacement  = "{{ $app.environment }}"
+    },
+    {
+      target_label = "app_version"
+      replacement  = "{{ $app.version }}"
+    },
+    {
+      target_label = "cluster_name"
+      replacement  = "{{ $app.cluster }}"
+    },
+    {
+      target_label = "business_unit"
+      replacement  = "{{ $app.businessUnit | default "unknown" }}"
+    },
+    {
+      target_label = "cost_center"
+      replacement  = "{{ $app.costCenter | default "unknown" }}"
+    },
+    {
+      target_label = "criticality"
+      replacement  = "{{ $app.criticality | default "medium" }}"
+    },
+  ]
+  
+  scrape_interval = "{{ .Values.telemetry.metrics.interval }}"
+  
+  forward_to = [prometheus.remote_write.central.receiver]
+}
+
+// Remote write to central observability
+prometheus.remote_write "central" {
+  endpoint {
+    url = "{{ $centralEndpoint }}/api/v1/push"
+    
+    // Add global labels
+    metadata_config {
+      send_interval = "30s"
+      max_samples_per_send = 2000
+    }
+    
+    queue_config {
+      capacity = 10000
+      max_samples_per_send = 2000
+      batch_send_deadline = "5s"
+    }
+  }
+}
+{{- end }}
+
+// =========================================
+// LOGS COLLECTION
+// =========================================
+
+{{- if .Values.telemetry.logs.enabled }}
+// Kubernetes logs discovery
+discovery.kubernetes "pod_logs" {
+  role = "pod"
+  {{- if .Values.app.serviceDiscovery.enabled }}
+  namespaces {
+    {{- range .Values.app.serviceDiscovery.namespaces }}
+    names = ["{{ . }}"]
+    {{- end }}
+  }
+  {{- end }}
+}
+
+// Promtail for log collection
+loki.source.kubernetes "pod_logs" {
+  targets    = discovery.kubernetes.pod_logs.targets
+  forward_to = [loki.process.add_labels.receiver]
+}
+
+// Process logs and add labels
+loki.process "add_labels" {
+  // Add app-specific labels
+  stage.static_labels {
+    values = {
+      app_name = "{{ $app.name }}"
+      app_team = "{{ $app.team }}"
+      app_environment = "{{ $app.environment }}"
+      app_version = "{{ $app.version }}"
+      cluster_name = "{{ $app.cluster }}"
+      business_unit = "{{ $app.businessUnit | default "unknown" }}"
+      cost_center = "{{ $app.costCenter | default "unknown" }}"
+      criticality = "{{ $app.criticality | default "medium" }}"
+    }
+  }
+  
+  // JSON parsing stage
+  stage.json {
+    expressions = {
+      level = "level"
+      timestamp = "timestamp"
+      message = "message"
+      logger = "logger"
+    }
+  }
+  
+  // Log level filtering
+  {{- if .Values.telemetry.logs.levels }}
+  stage.match {
+    selector = "{level=~\"{{ join "|" .Values.telemetry.logs.levels }}\"}"
+    action = "keep"
+  }
+  {{- end }}
+  
+  {{- range .Values.telemetry.logs.pipelineStages }}
+  {{ . | toYaml | nindent 2 }}
+  {{- end }}
+  
+  forward_to = [loki.write.central.receiver]
+}
+
+// Write logs to central Loki
+loki.write "central" {
+  endpoint {
+    url = "{{ $centralEndpoint }}/loki/api/v1/push"
+    
+    // Batching configuration
+    batch_wait = "1s"
+    batch_size = 1048576  // 1MB
+  }
+}
+{{- end }}
+
+// =========================================
+// TRACES COLLECTION
+// =========================================
+
+{{- if .Values.telemetry.traces.enabled }}
+// OTLP receiver for traces
+otelcol.receiver.otlp "traces" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  
+  output {
+    traces = [otelcol.processor.batch.traces.input]
+  }
+}
+
+// Jaeger receiver for traces
+otelcol.receiver.jaeger "traces" {
+  protocols {
+    grpc {
+      endpoint = "0.0.0.0:14250"
+    }
+    thrift_http {
+      endpoint = "0.0.0.0:14268"
+    }
+  }
+  
+  output {
+    traces = [otelcol.processor.batch.traces.input]
+  }
+}
+
+// Batch processor for traces
+otelcol.processor.batch "traces" {
+  send_batch_size = 1024
+  send_batch_max_size = 2048
+  timeout = "1s"
+  
+  output {
+    traces = [otelcol.processor.resourcedetection.traces.input]
+  }
+}
+
+// Resource detection processor
+otelcol.processor.resourcedetection "traces" {
+  detectors = ["env", "system", "k8sattributes"]
+  
+  output {
+    traces = [otelcol.processor.attributes.traces.input]
+  }
+}
+
+// Add custom attributes
+otelcol.processor.attributes "traces" {
+  action {
+    key = "app.name"
+    value = "{{ $app.name }}"
+    action = "insert"
+  }
+  action {
+    key = "app.team"
+    value = "{{ $app.team }}"
+    action = "insert"
+  }
+  action {
+    key = "app.environment"
+    value = "{{ $app.environment }}"
+    action = "insert"
+  }
+  action {
+    key = "app.version"
+    value = "{{ $app.version }}"
+    action = "insert"
+  }
+  action {
+    key = "cluster.name"
+    value = "{{ $app.cluster }}"
+    action = "insert"
+  }
+  action {
+    key = "business.unit"
+    value = "{{ $app.businessUnit | default "unknown" }}"
+    action = "insert"
+  }
+  action {
+    key = "cost.center"
+    value = "{{ $app.costCenter | default "unknown" }}"
+    action = "insert"
+  }
+  action {
+    key = "criticality"
+    value = "{{ $app.criticality | default "medium" }}"
+    action = "insert"
+  }
+  
+  {{- range .Values.telemetry.traces.processors }}
+  {{ . | toYaml | nindent 2 }}
+  {{- end }}
+  
+  output {
+    traces = [otelcol.processor.probabilistic_sampler.traces.input]
+  }
+}
+
+// Probabilistic sampling
+otelcol.processor.probabilistic_sampler "traces" {
+  sampling_percentage = {{ .Values.telemetry.traces.samplingRate | mul 100 }}
+  
+  output {
+    traces = [otelcol.exporter.otlp.traces.input]
+  }
+}
+
+// Export to central Tempo
+otelcol.exporter.otlp "traces" {
+  client {
+    endpoint = "{{ $centralEndpoint }}/tempo/api/traces"
+    
+    // Batching
+    sending_queue {
+      enabled = true
+      num_consumers = 2
+      queue_size = 100
+    }
+    
+    retry_on_failure {
+      enabled = true
+      initial_interval = "5s"
+      max_interval = "30s"
+      max_elapsed_time = "300s"
+    }
+  }
+}
+{{- end }}
+
+// =========================================
+// HEALTH CHECK AND SELF-MONITORING
+// =========================================
+
+{{- if .Values.monitoring.selfMonitoring.enabled }}
+// Self-monitoring
+prometheus.exporter.self "alloy" {
+  // Export Alloy's own metrics
+}
+
+prometheus.scrape "alloy_self" {
+  targets = prometheus.exporter.self.alloy.targets
+  
+  relabel_configs = [
+    {
+      target_label = "app_name"
+      replacement  = "{{ $app.name }}-alloy"
+    },
+    {
+      target_label = "app_team"
+      replacement  = "{{ $app.team }}"
+    },
+    {
+      target_label = "cluster_name"
+      replacement  = "{{ $app.cluster }}"
+    },
+  ]
+  
+  forward_to = [prometheus.remote_write.central.receiver]
+}
+{{- end }}
+
+// HTTP server for health checks
+prometheus.exporter.unix "node" {
+  // Basic node metrics for health monitoring
+}
+
+// Health check endpoint
+prometheus.scrape "health" {
+  targets = prometheus.exporter.unix.node.targets
+  metrics_path = "/-/healthy"
+  
+  forward_to = [prometheus.remote_write.central.receiver]
+}
