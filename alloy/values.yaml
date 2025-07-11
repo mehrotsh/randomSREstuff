@@ -1,0 +1,113 @@
+# values.yaml - Default values for alloy-agent
+global:
+  # Central observability cluster endpoints
+  centralObservability:
+    alloyEndpoint: "https://central-alloy.observability.company.com:12345"
+    # Alternative: direct endpoints if bypassing central alloy
+    lokiEndpoint: "https://loki.observability.company.com:3100"
+    mimirEndpoint: "https://mimir.observability.company.com:9009"
+    tempoEndpoint: "https://tempo.observability.company.com:3200"
+
+# App-specific configuration (to be provided by app teams)
+app:
+  # Required fields
+  name: "my-application"           # Application name
+  team: "platform-team"           # Team owning the application
+  environment: "production"       # Environment (dev/staging/prod)
+  version: "1.0.0"               # Application version
+  cluster: "app-cluster-1"       # Cluster identifier
+  
+  # Optional fields
+  namespace: "default"            # Default namespace to monitor
+  businessUnit: "engineering"     # Business unit
+  costCenter: "eng-001"          # Cost center for billing
+  criticality: "high"            # Application criticality (low/medium/high/critical)
+  
+  # Service discovery configuration
+  serviceDiscovery:
+    enabled: true
+    namespaces: ["default", "app-namespace"]  # Namespaces to discover services
+    serviceAnnotations:
+      - "prometheus.io/scrape"
+      - "prometheus.io/port"
+      - "prometheus.io/path"
+
+# Alloy agent configuration
+alloy:
+  image:
+    repository: "grafana/alloy"
+    tag: "latest"
+    pullPolicy: "IfNotPresent"
+  
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+  
+  # Service account
+  serviceAccount:
+    create: true
+    name: "alloy-agent"
+    annotations: {}
+
+# Telemetry configuration
+telemetry:
+  metrics:
+    enabled: true
+    interval: "30s"
+    # Additional metric relabeling rules
+    relabelConfigs: []
+  
+  logs:
+    enabled: true
+    # Log levels to collect
+    levels: ["error", "warn", "info"]
+    # Additional log pipeline stages
+    pipelineStages: []
+  
+  traces:
+    enabled: true
+    samplingRate: 0.1  # 10% sampling
+    # Additional trace processors
+    processors: []
+
+# Network and security
+network:
+  # Service mesh integration
+  istio:
+    enabled: false
+    mtls: false
+  
+  # Network policies
+  networkPolicy:
+    enabled: true
+    ingress: []
+    egress:
+      - to: []
+        ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 80
+
+# Monitoring and alerting
+monitoring:
+  # Self-monitoring of alloy agent
+  selfMonitoring:
+    enabled: true
+    metricsPort: 12345
+  
+  # Health checks
+  healthCheck:
+    enabled: true
+    port: 12345
+    path: "/-/healthy"
