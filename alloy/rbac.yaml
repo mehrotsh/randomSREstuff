@@ -1,0 +1,289 @@
+#
+# RBAC Templates for Flexible Security Scoping
+# File: templates/rbac.yaml
+#
+
+{{- if .Values.rbac.create }}
+---
+# Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "alloy.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alloy.labels" . | nindent 4 }}
+automountServiceAccountToken: true
+
+---
+{{- if eq .Values.rbac.scope "namespace" }}
+# NAMESPACE-SCOPED RBAC CONFIGURATION
+# Minimal permissions for application monitoring only
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "alloy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alloy.labels" . | nindent 4 }}
+rules:
+# Core pod and service discovery
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+
+# Pod logs access
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+
+# ConfigMaps and Secrets (for service discovery)
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+
+# Service discovery for annotated resources
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+
+{{- if .Values.monitoring.namespaces }}
+{{- range .Values.monitoring.namespaces }}
+{{- if ne . $.Release.Namespace }}
+---
+# Additional Role for {{ . }} namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "alloy.fullname" $ }}-{{ . }}
+  namespace: {{ . }}
+  labels:
+    {{- include "alloy.labels" $ | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for {{ . }} namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "alloy.fullname" $ }}-{{ . }}
+  namespace: {{ . }}
+  labels:
+    {{- include "alloy.labels" $ | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "alloy.serviceAccountName" $ }}
+  namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "alloy.fullname" $ }}-{{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+# Custom additional rules
+{{- if .Values.rbac.additionalRules }}
+{{- with .Values.rbac.additionalRules }}
+{{- toYaml . | nindent 0 }}
+{{- end }}
+{{- end }}
+
+---
+# Primary RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "alloy.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alloy.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "alloy.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "alloy.fullname" . }}
+
+{{- else if eq .Values.rbac.scope "cluster" }}
+# CLUSTER-SCOPED RBAC CONFIGURATION
+# Comprehensive permissions for full infrastructure monitoring
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "alloy.fullname" . }}
+  labels:
+    {{- include "alloy.labels" . | nindent 4 }}
+rules:
+# Core Kubernetes resources
+- apiGroups: [""]
+  resources: 
+    - nodes
+    - nodes/proxy
+    - nodes/metrics
+    - services
+    - endpoints
+    - pods
+    - pods/log
+    - configmaps
+    - secrets
+    - namespaces
+    - persistentvolumes
+    - persistentvolumeclaims
+  verbs: ["get", "list", "watch"]
+
+# Apps resources
+- apiGroups: ["apps"]
+  resources:
+    - deployments
+    - daemonsets
+    - replicasets
+    - statefulsets
+  verbs: ["get", "list", "watch"]
+
+# Networking resources
+- apiGroups: ["networking.k8s.io"]
+  resources:
+    - ingresses
+    - networkpolicies
+  verbs: ["get", "list", "watch"]
+
+# Metrics and monitoring
+- apiGroups: ["metrics.k8s.io"]
+  resources:
+    - nodes
+    - pods
+  verbs: ["get", "list"]
+
+# Storage resources
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - storageclasses
+    - volumeattachments
+  verbs: ["get", "list", "watch"]
+
+# RBAC resources (for monitoring)
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources:
+    - clusterroles
+    - clusterrolebindings
+    - roles
+    - rolebindings
+  verbs: ["get", "list", "watch"]
+
+# Batch resources
+- apiGroups: ["batch"]
+  resources:
+    - jobs
+    - cronjobs
+  verbs: ["get", "list", "watch"]
+
+# Extended resources for comprehensive monitoring
+- apiGroups: ["extensions"]
+  resources:
+    - ingresses
+    - deployments
+    - daemonsets
+    - replicasets
+  verbs: ["get", "list", "watch"]
+
+# Policy resources
+- apiGroups: ["policy"]
+  resources:
+    - poddisruptionbudgets
+  verbs: ["get", "list", "watch"]
+
+# Certificate management
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+    - certificatesigningrequests
+  verbs: ["get", "list", "watch"]
+
+# Coordination resources
+- apiGroups: ["coordination.k8s.io"]
+  resources:
+    - leases
+  verbs: ["get", "list", "watch"]
+
+# Discovery resources
+- apiGroups: ["discovery.k8s.io"]
+  resources:
+    - endpointslices
+  verbs: ["get", "list", "watch"]
+
+# Custom Resource Definitions monitoring
+- apiGroups: ["apiextensions.k8s.io"]
+  resources:
+    - customresourcedefinitions
+  verbs: ["get", "list", "watch"]
+
+# Events for troubleshooting
+- apiGroups: [""]
+  resources:
+    - events
+  verbs: ["get", "list", "watch"]
+
+# Node metrics access
+- nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+  verbs: ["get"]
+
+# Custom additional rules
+{{- if .Values.rbac.additionalRules }}
+{{- with .Values.rbac.additionalRules }}
+{{- toYaml . | nindent 0 }}
+{{- end }}
+{{- end }}
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "alloy.fullname" . }}
+  labels:
+    {{- include "alloy.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "alloy.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "alloy.fullname" . }}
+
+{{- end }}
+{{- end }}
+
+---
+#
+# Helper template for conditional RBAC rules
+# File: templates/_helpers.tpl (addition)
+#
+
+{{/*
+Generate service account name
+*/}}
+{{- define "alloy.serviceAccountName" -}}
+{{- if .Values.rbac.serviceAccountName }}
+{{- .Values.rbac.serviceAccountName }}
+{{- else }}
+{{- include "alloy.fullname" . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Validate RBAC scope configuration
+*/}}
+{{- define "alloy.validateRBAC" -}}
+{{- if not (or (eq .Values.rbac.scope "namespace") (eq .Values.rbac.scope "cluster")) }}
+{{- fail "rbac.scope must be either 'namespace' or 'cluster'" }}
