@@ -1,0 +1,213 @@
+#
+# Grafana Alloy Edge Agent Helm Chart Values
+# Configurable template for multi-tenant observability
+#
+
+# ============================================================================
+# CLUSTER IDENTIFICATION
+# ============================================================================
+cluster:
+  name: ""                    # REQUIRED: Unique cluster identifier
+  environment: "production"   # Environment label (dev/staging/production)
+  region: ""                  # Optional: Azure region (eastus, westus2, etc.)
+
+# ============================================================================
+# TENANT AND AUTHENTICATION
+# ============================================================================
+tenant:
+  id: ""                      # Optional: Override tenant ID (defaults to cluster.name)
+
+auth:
+  enabled: false              # Enable authentication to central stack
+  token: ""                   # Bearer token for authentication
+  # For Azure managed identity, set enabled: false and configure pod identity
+
+# ============================================================================
+# CENTRAL ENDPOINTS
+# ============================================================================
+endpoints:
+  # OTLP endpoints to central observability cluster
+  loki: "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/push"
+  prometheus: "http://mimir-gateway.observability.svc.cluster.local/api/v1/push"
+  tempo: "http://tempo-gateway.observability.svc.cluster.local:4317"
+
+# ============================================================================
+# MONITORING SCOPE CONFIGURATION
+# ============================================================================
+monitoring:
+  # Application-only vs Full-stack monitoring
+  applicationOnly: true       # Set to false for infrastructure monitoring
+  
+  # Target namespaces for monitoring (application-only mode)
+  namespaces:
+    - "default"
+    - "kube-system"
+  
+  # Regex pattern for namespace filtering
+  namespacesRegex: "^(default|kube-system|my-app-.*)$"
+
+# ============================================================================
+# RBAC CONFIGURATION
+# ============================================================================
+rbac:
+  # RBAC scope: "namespace" or "cluster"
+  scope: "namespace"          # Use "cluster" for full infrastructure monitoring
+  
+  # Create RBAC resources
+  create: true
+  
+  # Existing service account name (if not creating new one)
+  serviceAccountName: ""
+  
+  # Additional RBAC rules for custom resources
+  additionalRules: []
+  # - apiGroups: ["custom.io"]
+  #   resources: ["customresources"]
+  #   verbs: ["get", "list", "watch"]
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+logging:
+  enabled: true
+  
+  # Patterns to drop noisy logs (regex)
+  dropPatterns:
+    - ".*health.*check.*"     # Drop health check logs
+    - ".*readiness.*probe.*"  # Drop readiness probe logs
+  
+  # Log level filtering (if needed)
+  minLevel: "info"            # Minimum log level to collect
+
+# ============================================================================
+# METRICS CONFIGURATION
+# ============================================================================
+metrics:
+  enabled: true
+  
+  # Scraping intervals
+  scrapeInterval: "30s"
+  scrapeTimeout: "10s"
+  
+  # Infrastructure metrics (only used when applicationOnly: false)
+  infrastructure:
+    scrapeInterval: "60s"
+    
+    # Kube-state-metrics integration
+    kubeStateMetrics:
+      enabled: true
+      endpoint: "kube-state-metrics.kube-system.svc.cluster.local:8080"
+
+# ============================================================================
+# TRACING CONFIGURATION
+# ============================================================================
+tracing:
+  enabled: true
+  
+  # OTLP receiver ports
+  grpc:
+    port: 4317
+  http:
+    port: 4318
+
+# ============================================================================
+# DEPLOYMENT CONFIGURATION
+# ============================================================================
+deployment:
+  # Alloy image configuration
+  image:
+    repository: "grafana/alloy"
+    tag: ""                   # Leave empty for chart appVersion
+    pullPolicy: "IfNotPresent"
+  
+  # Resource requirements
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+  
+  # Pod security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+  
+  # Node selection
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  # Number of replicas
+  replicas: 1
+
+# ============================================================================
+# NETWORKING CONFIGURATION
+# ============================================================================
+service:
+  type: "ClusterIP"
+  
+  # Expose OTLP receiver ports
+  ports:
+    - name: "otlp-grpc"
+      port: 4317
+      targetPort: 4317
+      protocol: "TCP"
+    - name: "otlp-http"
+      port: 4318
+      targetPort: 4318
+      protocol: "TCP"
+    - name: "health"
+      port: 12345
+      targetPort: 12345
+      protocol: "TCP"
+
+# Optional: Ingress for external access to OTLP endpoints
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+# ============================================================================
+# VOLUME MOUNTS AND STORAGE
+# ============================================================================
+volumes:
+  # Mount host paths for log collection
+  hostPaths:
+    - name: "varlog"
+      hostPath: "/var/log"
+      mountPath: "/var/log"
+      readOnly: true
+    - name: "varlibdockercontainers"
+      hostPath: "/var/lib/docker/containers"
+      mountPath: "/var/lib/docker/containers"
+      readOnly: true
+
+# ============================================================================
+# ADVANCED CONFIGURATION
+# ============================================================================
+# Custom configuration snippets to append to config.alloy
+customConfig: ""
+
+# Environment variables for the Alloy container
+env: []
+# - name: "CUSTOM_VAR"
+#   value: "custom_value"
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod labels
+podLabels: {}
+
+# Horizontal Pod Autoscaler
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
