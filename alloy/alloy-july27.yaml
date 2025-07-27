@@ -1,137 +1,502 @@
-// ============================================================================
-// EVENTS COLLECTION
-// ============================================================================
-{{- if .Values.events.enabled }}
+//
+// Grafana Alloy Edge Agent Configuration Template
+// Designed for multi-tenant observability with LGTM stack
+//
 
-// Discover Kubernetes events
-discovery.kubernetes "events" {
-  role = "event"
-  
-  {{- if .Values.monitoring.applicationOnly }}
+// ============================================================================
+// DISCOVERY COMPONENTS
+// ============================================================================
+
+{{- if .Values.monitoring.applicationOnly }}
+// Application-only monitoring: Discover pods in target namespace
+discovery.kubernetes "app_pods" {
+  role = "pod"
   namespaces {
-    names = {{ .Values.monitoring.namespaces | toJson }}
+    names = [{{ range .Values.monitoring.namespaces }}"{{ . }}",{{ end }}]
   }
-  {{- end }}
 }
 
-// Relabel events for collection
-discovery.relabel "events" {
-  targets = discovery.kubernetes.events.targets
-  
-  // Keep only events in monitored namespaces
+discovery.kubernetes "app_services" {
+  role = "service"
+  namespaces {
+    names = [{{ range .Values.monitoring.namespaces }}"{{ . }}",{{ end }}]
+  }
+}
+{{- else }}
+// Full-stack monitoring: Discover all cluster resources
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.kubernetes "services" {
+  role = "service"
+}
+
+discovery.kubernetes "nodes" {
+  role = "node"
+}
+
+discovery.kubernetes "endpoints" {
+  role = "endpoints"
+}
+
+discovery.kubernetes "endpointslices" {
+  role = "endpointslice"
+}
+{{- end }}
+
+// ============================================================================
+// LOGGING COMPONENTS
+// ============================================================================
+
+{{- if .Values.logging.enabled }}
+// Discover pods for log collection
+discovery.relabel "logs" {
+  targets = discovery.kubernetes.{{ if .Values.monitoring.applicationOnly }}app_pods{{ else }}pods{{ end }}.targets
+
+  // Keep only pods in monitored namespaces
   rule {
     source_labels = ["__meta_kubernetes_namespace"]
     regex = "{{ .Values.monitoring.namespacesRegex | default ".*" }}"
     action = "keep"
   }
-  
-  // Add event metadata
+
+  // Add container name
   rule {
-    source_labels = ["__meta_kubernetes_event_reason"]
-    target_label = "reason"
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label = "container"
   }
-  
+
+  // Add pod name
   rule {
-    source_labels = ["__meta_kubernetes_event_type"]
-    target_label = "type"
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label = "pod"
   }
-  
-  rule {
-    source_labels = ["__meta_kubernetes_event_involvedobject_kind"]
-    target_label = "object_kind"
-  }
-  
-  rule {
-    source_labels = ["__meta_kubernetes_event_involvedobject_name"]
-    target_label = "object_name"
-  }
-  
+
+  // Add namespace
   rule {
     source_labels = ["__meta_kubernetes_namespace"]
     target_label = "namespace"
   }
-  
+
+  // Set log path
+  rule {
+    source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+    target_label = "__path__"
+    replacement = "/var/log/pods/*$1*/*$2*/*.log"
+  }
+
   // Add external labels for multitenancy
   rule {
     target_label = "cluster"
     replacement = "{{ .Values.cluster.name }}"
   }
-  
+
   rule {
     target_label = "environment"
     replacement = "{{ .Values.cluster.environment }}"
   }
-  
+
   rule {
     target_label = "region"
     replacement = "{{ .Values.cluster.region | default "unknown" }}"
   }
 }
 
-// Process and format events
-loki.source.kubernetes "events" {
-  targets = discovery.relabel.events.output
-  forward_to = [loki.process.events.receiver]
+// Log collection and processing
+loki.source.kubernetes "logs" {
+  targets    = discovery.relabel.logs.output
+  forward_to = [loki.process.logs.receiver]
 }
 
-loki.process "events" {
+loki.process "logs" {
   forward_to = [loki.write.central.receiver]
-  
-  // Parse event timestamp
-  stage.timestamp {
-    source = "timestamp"
-    format = "RFC3339"
-  }
-  
-  // Add structured labels for events
-  stage.labels {
-    values = {
-      reason = "",
-      type = "",
-      object_kind = "",
-      severity = "",
+
+  // Parse JSON logs if possible
+  stage.json {
+    expressions = {
+      level     = "level",
+      timestamp = "timestamp",
+      message   = "message",
     }
   }
-  
-  // Map event types to severity levels
-  stage.replace {
-    expression = "(?i)warning|failed|unhealthy|kill|oom"
-    source = "reason"
-    replace = "warning"
-    target = "severity"
+
+  // Extract log level
+  stage.regex {
+    expression = "(?i)(?P<level>debug|info|warn|warning|error|fatal|panic)"
+    source     = "message"
   }
-  
-  stage.replace {
-    expression = "(?i)error|failed|backoff"
-    source = "type"
-    replace = "error"
-    target = "severity"
+
+  // Add structured labels
+  stage.labels {
+    values = {
+      level = "",
+    }
   }
-  
-  // Default to info level
-  stage.replace {
-    expression = "^$"
-    source = "severity"
-    replace = "info"
-    target = "severity"
-  }
-  
-  // Filter out noisy events (configurable)
-  {{- range .Values.events.dropPatterns | default list }}
+
+  // Drop noisy logs (configurable)
+  {{- range .Values.logging.dropPatterns }}
   stage.drop {
     expression = "{{ . }}"
-    source = "reason"
-  }
-  {{- end }}
-  
-  // Rate limit similar events
-  {{- if .Values.events.rateLimitEnabled | default true }}
-  stage.limit {
-    rate = {{ .Values.events.rateLimit | default 10 }}
-    burst = {{ .Values.events.rateBurst | default 20 }}
-    by_label = ["reason", "object_kind", "object_name", "namespace"]
   }
   {{- end }}
 }
 
+// Central Loki writer
+loki.write "central" {
+  endpoint {
+    url = "{{ .Values.endpoints.loki }}"
+    {{- if .Values.auth.enabled }}
+    bearer_token = "{{ .Values.auth.token }}"
+    {{- end }}
+    
+    // Add tenant header for multi-tenancy
+    headers = {
+      "X-Scope-OrgID" = "{{ .Values.tenant.id | default .Values.cluster.name }}"
+    }
+  }
+
+  external_labels = {
+    cluster     = "{{ .Values.cluster.name }}",
+    environment = "{{ .Values.cluster.environment }}",
+    region      = "{{ .Values.cluster.region | default "unknown" }}",
+  }
+}
 {{- end }}
+
+// ============================================================================
+// METRICS COMPONENTS
+// ============================================================================
+
+{{- if .Values.metrics.enabled }}
+// Application metrics discovery and scraping
+discovery.relabel "app_metrics" {
+  targets = discovery.kubernetes.{{ if .Values.monitoring.applicationOnly }}app_pods{{ else }}pods{{ end }}.targets
+
+  // Keep only annotated pods
+  rule {
+    source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+    regex = "true"
+    action = "keep"
+  }
+
+  // Use custom port if specified
+  rule {
+    source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port", "__meta_kubernetes_pod_ip"]
+    regex = "([^;]+);(.*)"
+    target_label = "__address__"
+    replacement = "${2}:${1}"
+  }
+
+  // Use custom path if specified
+  rule {
+    source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+    target_label = "__metrics_path__"
+    regex = "(.+)"
+  }
+
+  // Add standard labels
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label = "pod"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label = "container"
+  }
+
+  // Add external labels
+  rule {
+    target_label = "cluster"
+    replacement = "{{ .Values.cluster.name }}"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement = "{{ .Values.cluster.environment }}"
+  }
+}
+
+// Service discovery for annotated services
+discovery.relabel "service_metrics" {
+  targets = discovery.kubernetes.{{ if .Values.monitoring.applicationOnly }}app_services{{ else }}services{{ end }}.targets
+
+  // Keep only annotated services
+  rule {
+    source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
+    regex = "true"
+    action = "keep"
+  }
+
+  // Use custom port if specified
+  rule {
+    source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_port"]
+    target_label = "__meta_kubernetes_service_port_number"
+    regex = "(.+)"
+  }
+
+  // Use custom path if specified
+  rule {
+    source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_path"]
+    target_label = "__metrics_path__"
+    regex = "(.+)"
+  }
+
+  // Add service labels
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label = "namespace"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_service_name"]
+    target_label = "service"
+  }
+
+  // Add external labels
+  rule {
+    target_label = "cluster"
+    replacement = "{{ .Values.cluster.name }}"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement = "{{ .Values.cluster.environment }}"
+  }
+}
+
+// Scrape application metrics
+prometheus.scrape "app_pods" {
+  targets         = discovery.relabel.app_metrics.output
+  forward_to      = [prometheus.remote_write.central.receiver]
+  scrape_interval = "{{ .Values.metrics.scrapeInterval | default "30s" }}"
+  scrape_timeout  = "{{ .Values.metrics.scrapeTimeout | default "10s" }}"
+}
+
+prometheus.scrape "app_services" {
+  targets         = discovery.relabel.service_metrics.output
+  forward_to      = [prometheus.remote_write.central.receiver]
+  scrape_interval = "{{ .Values.metrics.scrapeInterval | default "30s" }}"
+  scrape_timeout  = "{{ .Values.metrics.scrapeTimeout | default "10s" }}"
+}
+
+{{- if not .Values.monitoring.applicationOnly }}
+// ============================================================================
+// INFRASTRUCTURE METRICS (Full-stack monitoring only)
+// ============================================================================
+
+// Node metrics
+discovery.relabel "node_metrics" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    target_label = "__address__"
+    replacement = "kubernetes.default.svc:443"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    regex = "(.+)"
+    target_label = "__metrics_path__"
+    replacement = "/api/v1/nodes/${1}/proxy/metrics"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label = "node"
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement = "{{ .Values.cluster.name }}"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement = "{{ .Values.cluster.environment }}"
+  }
+}
+
+// Kubelet cAdvisor metrics
+discovery.relabel "cadvisor_metrics" {
+  targets = discovery.kubernetes.nodes.targets
+
+  rule {
+    target_label = "__address__"
+    replacement = "kubernetes.default.svc:443"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    regex = "(.+)"
+    target_label = "__metrics_path__"
+    replacement = "/api/v1/nodes/${1}/proxy/metrics/cadvisor"
+  }
+
+  rule {
+    source_labels = ["__meta_kubernetes_node_name"]
+    target_label = "node"
+  }
+
+  rule {
+    target_label = "cluster"
+    replacement = "{{ .Values.cluster.name }}"
+  }
+}
+
+// Scrape infrastructure metrics
+prometheus.scrape "nodes" {
+  targets    = discovery.relabel.node_metrics.output
+  forward_to = [prometheus.remote_write.central.receiver]
+  scrape_interval = "{{ .Values.metrics.infrastructure.scrapeInterval | default "60s" }}"
+  
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  
+  tls_config {
+    ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = false
+  }
+}
+
+prometheus.scrape "cadvisor" {
+  targets    = discovery.relabel.cadvisor_metrics.output
+  forward_to = [prometheus.remote_write.central.receiver]
+  scrape_interval = "{{ .Values.metrics.infrastructure.scrapeInterval | default "60s" }}"
+  
+  bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  
+  tls_config {
+    ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    insecure_skip_verify = false
+  }
+}
+
+{{- if .Values.metrics.infrastructure.kubeStateMetrics.enabled }}
+// Kube-state-metrics scraping
+prometheus.scrape "kube_state_metrics" {
+  targets = [{
+    __address__ = "{{ .Values.metrics.infrastructure.kubeStateMetrics.endpoint }}",
+  }]
+  forward_to = [prometheus.remote_write.central.receiver]
+  scrape_interval = "{{ .Values.metrics.infrastructure.scrapeInterval | default "60s" }}"
+}
+{{- end }}
+{{- end }}
+
+// Central Prometheus remote write
+prometheus.remote_write "central" {
+  endpoint {
+    url = "{{ .Values.endpoints.prometheus }}"
+    {{- if .Values.auth.enabled }}
+    bearer_token = "{{ .Values.auth.token }}"
+    {{- end }}
+    
+    // Add tenant header for multi-tenancy
+    headers = {
+      "X-Scope-OrgID" = "{{ .Values.tenant.id | default .Values.cluster.name }}"
+    }
+  }
+
+  external_labels = {
+    cluster     = "{{ .Values.cluster.name }}",
+    environment = "{{ .Values.cluster.environment }}",
+    region      = "{{ .Values.cluster.region | default "unknown" }}",
+  }
+}
+{{- end }}
+
+// ============================================================================
+// TRACING COMPONENTS
+// ============================================================================
+
+{{- if .Values.tracing.enabled }}
+// OTLP receiver for traces
+otelcol.receiver.otlp "traces" {
+  grpc {
+    endpoint = "0.0.0.0:{{ .Values.tracing.grpc.port | default 4317 }}"
+  }
+  
+  http {
+    endpoint = "0.0.0.0:{{ .Values.tracing.http.port | default 4318 }}"
+  }
+
+  output {
+    traces = [otelcol.processor.resourcedetection.traces.input]
+  }
+}
+
+// Add resource detection
+otelcol.processor.resourcedetection "traces" {
+  detectors = ["env", "system", "k8sattributes"]
+  
+  output {
+    traces = [otelcol.processor.resource.traces.input]
+  }
+}
+
+// Add cluster and environment attributes
+otelcol.processor.resource "traces" {
+  attributes {
+    action = "upsert"
+    key = "cluster"
+    value = "{{ .Values.cluster.name }}"
+  }
+  
+  attributes {
+    action = "upsert"
+    key = "environment"
+    value = "{{ .Values.cluster.environment }}"
+  }
+  
+  attributes {
+    action = "upsert"
+    key = "region"
+    value = "{{ .Values.cluster.region | default "unknown" }}"
+  }
+
+  output {
+    traces = [otelcol.exporter.otlp.central.input]
+  }
+}
+
+// Export to central Tempo
+otelcol.exporter.otlp "central" {
+  client {
+    endpoint = "{{ .Values.endpoints.tempo }}"
+    {{- if .Values.auth.enabled }}
+    headers = {
+      "Authorization" = "Bearer {{ .Values.auth.token }}"
+      "X-Scope-OrgID" = "{{ .Values.tenant.id | default .Values.cluster.name }}"
+    }
+    {{- end }}
+  }
+}
+{{- end }}
+
+// ============================================================================
+// HEALTH CHECK AND MONITORING
+// ============================================================================
+
+// Health check endpoint
+prometheus.exporter.unix "agent_health" {
+  include_exporter_metrics = true
+}
+
+prometheus.scrape "agent_health" {
+  targets    = prometheus.exporter.unix.agent_health.targets
+  forward_to = [prometheus.remote_write.central.receiver]
+  scrape_interval = "30s"
+  
+  // Add agent-specific labels
+  extra_labels = {
+    job = "alloy-agent",
+    cluster = "{{ .Values.cluster.name }}",
+    environment = "{{ .Values.cluster.environment }}",
+  }
+}
