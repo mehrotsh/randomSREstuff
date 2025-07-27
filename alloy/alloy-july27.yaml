@@ -1,0 +1,137 @@
+// ============================================================================
+// EVENTS COLLECTION
+// ============================================================================
+{{- if .Values.events.enabled }}
+
+// Discover Kubernetes events
+discovery.kubernetes "events" {
+  role = "event"
+  
+  {{- if .Values.monitoring.applicationOnly }}
+  namespaces {
+    names = {{ .Values.monitoring.namespaces | toJson }}
+  }
+  {{- end }}
+}
+
+// Relabel events for collection
+discovery.relabel "events" {
+  targets = discovery.kubernetes.events.targets
+  
+  // Keep only events in monitored namespaces
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    regex = "{{ .Values.monitoring.namespacesRegex | default ".*" }}"
+    action = "keep"
+  }
+  
+  // Add event metadata
+  rule {
+    source_labels = ["__meta_kubernetes_event_reason"]
+    target_label = "reason"
+  }
+  
+  rule {
+    source_labels = ["__meta_kubernetes_event_type"]
+    target_label = "type"
+  }
+  
+  rule {
+    source_labels = ["__meta_kubernetes_event_involvedobject_kind"]
+    target_label = "object_kind"
+  }
+  
+  rule {
+    source_labels = ["__meta_kubernetes_event_involvedobject_name"]
+    target_label = "object_name"
+  }
+  
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label = "namespace"
+  }
+  
+  // Add external labels for multitenancy
+  rule {
+    target_label = "cluster"
+    replacement = "{{ .Values.cluster.name }}"
+  }
+  
+  rule {
+    target_label = "environment"
+    replacement = "{{ .Values.cluster.environment }}"
+  }
+  
+  rule {
+    target_label = "region"
+    replacement = "{{ .Values.cluster.region | default "unknown" }}"
+  }
+}
+
+// Process and format events
+loki.source.kubernetes "events" {
+  targets = discovery.relabel.events.output
+  forward_to = [loki.process.events.receiver]
+}
+
+loki.process "events" {
+  forward_to = [loki.write.central.receiver]
+  
+  // Parse event timestamp
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339"
+  }
+  
+  // Add structured labels for events
+  stage.labels {
+    values = {
+      reason = "",
+      type = "",
+      object_kind = "",
+      severity = "",
+    }
+  }
+  
+  // Map event types to severity levels
+  stage.replace {
+    expression = "(?i)warning|failed|unhealthy|kill|oom"
+    source = "reason"
+    replace = "warning"
+    target = "severity"
+  }
+  
+  stage.replace {
+    expression = "(?i)error|failed|backoff"
+    source = "type"
+    replace = "error"
+    target = "severity"
+  }
+  
+  // Default to info level
+  stage.replace {
+    expression = "^$"
+    source = "severity"
+    replace = "info"
+    target = "severity"
+  }
+  
+  // Filter out noisy events (configurable)
+  {{- range .Values.events.dropPatterns | default list }}
+  stage.drop {
+    expression = "{{ . }}"
+    source = "reason"
+  }
+  {{- end }}
+  
+  // Rate limit similar events
+  {{- if .Values.events.rateLimitEnabled | default true }}
+  stage.limit {
+    rate = {{ .Values.events.rateLimit | default 10 }}
+    burst = {{ .Values.events.rateBurst | default 20 }}
+    by_label = ["reason", "object_kind", "object_name", "namespace"]
+  }
+  {{- end }}
+}
+
+{{- end }}
