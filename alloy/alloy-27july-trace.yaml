@@ -1,0 +1,177 @@
+// ============================================================================
+// TRACING COMPONENTS
+// ============================================================================
+{{- if .Values.tracing.enabled }}
+
+// OTLP receiver for traces
+otelcol.receiver.otlp "traces" {
+  grpc {
+    endpoint = "0.0.0.0:{{ .Values.tracing.grpc.port | default 4317 }}"
+  }
+  
+  http {
+    endpoint = "0.0.0.0:{{ .Values.tracing.http.port | default 4318 }}"
+  }
+  
+  output {
+    traces = [otelcol.processor.resourcedetection.traces.input]
+  }
+}
+
+// Add resource detection
+otelcol.processor.resourcedetection "traces" {
+  detectors = ["env", "system", "k8sattributes"]
+  
+  output {
+    traces = [otelcol.processor.resource.traces.input]
+  }
+}
+
+// Add cluster and environment attributes
+otelcol.processor.resource "traces" {
+  attributes {
+    action = "upsert"
+    key = "cluster"
+    value = "{{ .Values.cluster.name }}"
+  }
+  
+  attributes {
+    action = "upsert"
+    key = "environment"
+    value = "{{ .Values.cluster.environment }}"
+  }
+  
+  attributes {
+    action = "upsert"
+    key = "region"
+    value = "{{ .Values.cluster.region | default "unknown" }}"
+  }
+  
+  output {
+    traces = [
+      otelcol.connector.servicegraph.tracemetrics.input,
+      otelcol.connector.spanmetrics.tracemetrics.input,
+      otelcol.connector.spanlogs.autologging.input,
+      otelcol.processor.batch.default.input,
+      otelcol.processor.tail_sampling.errors.input
+    ]
+  }
+}
+
+// Batch processor for efficient data handling
+otelcol.processor.batch "default" {
+  send_batch_size = 1024
+  timeout = "5s"
+  
+  output {
+    traces = [otelcol.exporter.otlp.central.input]
+  }
+}
+
+// Tail sampling processor for error traces
+otelcol.processor.tail_sampling "errors" {
+  decision_wait = "10s"
+  num_traces = 50000
+  expected_new_traces_per_sec = 10
+  
+  policies {
+    name = "error_sampling"
+    type = "status_code"
+    status_code {
+      status_codes = ["ERROR"]
+    }
+  }
+  
+  policies {
+    name = "rate_limiting"
+    type = "rate_limiting"
+    rate_limiting {
+      spans_per_second = 100
+    }
+  }
+  
+  output {
+    traces = [otelcol.exporter.otlp.central.input]
+  }
+}
+
+// Service graph connector to generate service topology metrics
+otelcol.connector.servicegraph "tracemetrics" {
+  dimensions = ["cluster", "environment", "region"]
+  store {
+    ttl = "10m"
+    max_items = 1000
+  }
+  
+  output {
+    metrics = [otelcol.exporter.prometheus.servicegraph.input]
+  }
+}
+
+// Span metrics connector to generate RED metrics
+otelcol.connector.spanmetrics "tracemetrics" {
+  histogram_buckets = [2ms, 4ms, 6ms, 8ms, 10ms, 50ms, 100ms, 200ms, 400ms, 800ms, 1s, 1400ms, 2s, 5s, 10s, 15s]
+  dimensions = [
+    {
+      name = "http.method"
+      default = "GET"
+    },
+    {
+      name = "http.status_code"
+    },
+    {
+      name = "service.name"
+    },
+    {
+      name = "operation"
+    }
+  ]
+  
+  output {
+    metrics = [otelcol.exporter.prometheus.spanmetrics.input]
+  }
+}
+
+// Span logs connector for automatic logging
+otelcol.connector.spanlogs "autologging" {
+  spans_to_logs {
+    span_id = "span_id"
+    trace_id = "trace_id"
+  }
+  
+  output {
+    logs = [otelcol.exporter.loki.spanlogs.input]
+  }
+}
+
+// Export to central Tempo
+otelcol.exporter.otlp "central" {
+  client {
+    endpoint = "{{ .Values.endpoints.tempo }}"
+    {{- if .Values.auth.enabled }}
+    headers = {
+      "Authorization" = "Bearer {{ .Values.auth.token }}"
+      "X-Scope-OrgID" = "{{ .Values.tenant.id | default .Values.cluster.name }}"
+    }
+    {{- end }}
+  }
+}
+
+// Export service graph metrics to Prometheus
+otelcol.exporter.prometheus "servicegraph" {
+  forward_to = [prometheus.remote_write.servicegraph.receiver]
+  add_metric_suffixes = false
+}
+
+// Export span metrics to Prometheus  
+otelcol.exporter.prometheus "spanmetrics" {
+  forward_to = [prometheus.remote_write.spanmetrics.receiver]
+  add_metric_suffixes = false
+}
+
+// Export span logs to Loki
+otelcol.exporter.loki "spanlogs" {
+  forward_to = [loki.write.spanlogs.receiver]
+}
+
+{{- end }}
