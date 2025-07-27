@@ -3,7 +3,7 @@
 // ============================================================================
 {{- if .Values.tracing.enabled }}
 
-// OTLP receiver for traces
+// OTLP receiver for traces and metrics
 otelcol.receiver.otlp "traces" {
   grpc {
     endpoint = "0.0.0.0:{{ .Values.tracing.grpc.port | default 4317 }}"
@@ -14,16 +14,8 @@ otelcol.receiver.otlp "traces" {
   }
   
   output {
-    traces = [otelcol.processor.resourcedetection.traces.input]
-  }
-}
-
-// Add resource detection
-otelcol.processor.resourcedetection "traces" {
-  detectors = ["env", "system", "k8sattributes"]
-  
-  output {
     traces = [otelcol.processor.resource.traces.input]
+    metrics = [otelcol.processor.resource.metrics.input]
   }
 }
 
@@ -58,6 +50,31 @@ otelcol.processor.resource "traces" {
   }
 }
 
+// Add cluster and environment attributes for metrics
+otelcol.processor.resource "metrics" {
+  attributes {
+    action = "upsert"
+    key = "cluster"
+    value = "{{ .Values.cluster.name }}"
+  }
+  
+  attributes {
+    action = "upsert"
+    key = "environment"
+    value = "{{ .Values.cluster.environment }}"
+  }
+  
+  attributes {
+    action = "upsert"
+    key = "region"
+    value = "{{ .Values.cluster.region | default "unknown" }}"
+  }
+  
+  output {
+    metrics = [otelcol.processor.batch.metrics.input]
+  }
+}
+
 // Batch processor for efficient data handling
 otelcol.processor.batch "default" {
   send_batch_size = 1024
@@ -68,11 +85,21 @@ otelcol.processor.batch "default" {
   }
 }
 
+// Batch processor for metrics
+otelcol.processor.batch "metrics" {
+  send_batch_size = 1024
+  timeout = "5s"
+  
+  output {
+    metrics = [otelcol.exporter.otlp.central.input]
+  }
+}
+
 // Tail sampling processor for error traces
 otelcol.processor.tail_sampling "errors" {
   decision_wait = "10s"
-  num_traces = 50000
-  expected_new_traces_per_sec = 10
+  num_traces = {{ .Values.tracing.sampling.num_traces | default 50000 }}
+  expected_new_traces_per_sec = {{ .Values.tracing.sampling.expected_traces_per_sec | default 10 }}
   
   policies {
     name = "error_sampling"
@@ -86,7 +113,7 @@ otelcol.processor.tail_sampling "errors" {
     name = "rate_limiting"
     type = "rate_limiting"
     rate_limiting {
-      spans_per_second = 100
+      spans_per_second = {{ .Values.tracing.sampling.spans_per_second | default 100 }}
     }
   }
   
@@ -99,8 +126,8 @@ otelcol.processor.tail_sampling "errors" {
 otelcol.connector.servicegraph "tracemetrics" {
   dimensions = ["cluster", "environment", "region"]
   store {
-    ttl = "10m"
-    max_items = 1000
+    ttl = "{{ .Values.tracing.servicegraph.ttl | default "10m" }}"
+    max_items = {{ .Values.tracing.servicegraph.max_items | default 1000 }}
   }
   
   output {
