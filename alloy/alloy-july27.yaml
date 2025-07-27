@@ -500,3 +500,28 @@ prometheus.scrape "agent_health" {
     environment = "{{ .Values.cluster.environment }}",
   }
 }
+
+
+
+
+
+
+
+========================================
+// 4b. Scrape kube-state-metrics service (assuming it's deployed in kube-system).
+prometheus.scrape "kube_state_metrics" {
+  targets    = discovery.kubernetes.services.targets
+  forward_to = [otelcol.receiver.prometheus.metrics_bridge.receiver]
+  relabel_configs = [
+    {
+      source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"],
+      action        = "keep",
+      regex         = "kube-state-metrics",
+    },
+    {
+      source_labels = ["__meta_kubernetes_namespace"],
+      action        = "keep",
+      regex         = "kube-system",
+    },
+  ]
+}
