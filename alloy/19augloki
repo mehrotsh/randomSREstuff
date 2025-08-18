@@ -1,0 +1,273 @@
+// Grafana Alloy configuration for log collection from AKS cluster
+// Production-ready configuration with best practices
+
+// Kubernetes service discovery for pods
+discovery.kubernetes "pods" {
+  role = "pod"
+  namespaces {
+    names = ["default", "kube-system", "monitoring", "ingress-nginx"]
+  }
+}
+
+// Relabel discovered pods with proper labels
+discovery.relabel "kubernetes_pods" {
+  targets = discovery.kubernetes.pods.targets
+
+  // Keep only running pods with containers that have logs
+  rule {
+    source_labels = ["__meta_kubernetes_pod_phase"]
+    action        = "keep"
+    regex         = "Running"
+  }
+
+  // Drop pods without containers
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    action        = "drop"
+    regex         = ""
+  }
+
+  // Add namespace label
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+
+  // Add pod name
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+
+  // Add container name
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+
+  // Add deployment/replicaset owner
+  rule {
+    source_labels = ["__meta_kubernetes_pod_controller_kind", "__meta_kubernetes_pod_controller_name"]
+    separator     = "/"
+    target_label  = "controller"
+  }
+
+  // Add app label if exists
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    target_label  = "app"
+    regex         = "(.+)"
+  }
+
+  // Add app.kubernetes.io/name label if exists
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    target_label  = "app_name"
+    regex         = "(.+)"
+  }
+
+  // Add version label if exists
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_version"]
+    target_label  = "version"
+    regex         = "(.+)"
+  }
+
+  // Add environment label if exists
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_environment"]
+    target_label  = "environment"
+    regex         = "(.+)"
+  }
+
+  // Note: No __path__ needed for loki.source.kubernetes as it uses K8s API
+
+  // Add cluster name (set as external label)
+  rule {
+    target_label = "cluster"
+    replacement  = "aks-production"  // Replace with your cluster name
+  }
+
+  // Drop unwanted labels to reduce cardinality
+  rule {
+    regex  = "__meta_kubernetes_pod_label_pod_template_.*"
+    action = "labeldrop"
+  }
+
+  rule {
+    regex  = "__meta_kubernetes_pod_label_controller_revision_hash"
+    action = "labeldrop"
+  }
+}
+
+// Kubernetes logs source configuration
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.kubernetes_pods.output
+  forward_to = [loki.process.parse_logs.receiver]
+
+  // Client configuration for better performance
+  client {
+    // Backoff configuration for retries
+    backoff_config {
+      min_period     = "500ms"
+      max_period     = "5m"
+      max_retries    = 10
+    }
+  }
+}
+
+// API-based log source for additional log collection
+loki.source.api "external_logs" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port    = 3100
+    conn_limit     = 0
+  }
+
+  // Relabel API logs
+  relabel_configs {
+    source_labels = ["__loki_api_path"]
+    target_label  = "api_path"
+  }
+
+  forward_to = [loki.process.parse_logs.receiver]
+
+  // Add external labels for API logs
+  labels = {
+    source         = "api"
+    op_environment = "production"
+    region         = "eastus"
+    data_center    = "azure-aks"
+    team           = "platform"
+  }
+}
+
+// Log processing pipeline
+loki.process "parse_logs" {
+  forward_to = [loki.write.loki_cluster.receiver]
+
+  // JSON log parsing
+  stage.json {
+    expressions = {
+      level     = "level"
+      timestamp = "timestamp"
+      message   = "message"
+      logger    = "logger"
+      thread    = "thread"
+      service   = "service"
+    }
+  }
+
+  // Timestamp parsing
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339"
+  }
+
+  // Log level normalization
+  stage.replace {
+    expression = "level"
+    replace    = "{{ .level | ToUpper }}"
+  }
+
+  // Drop debug logs in production (optional)
+  stage.drop {
+    expression = "level"
+    value      = "DEBUG"
+    older_than = "24h"
+  }
+
+  // Add structured labels for high-cardinality fields
+  stage.labels {
+    values = {
+      level   = "level"
+      service = "service"
+    }
+  }
+
+  // Rate limiting to prevent log spam
+  stage.limit {
+    rate  = 1000
+    burst = 2000
+    by_label_name = "pod"
+  }
+
+  // Multiline log handling for stack traces
+  stage.multiline {
+    firstline     = "^\\d{4}-\\d{2}-\\d{2}|^\\[|^\\{|^ERROR|^WARN|^INFO|^DEBUG"
+    max_wait_time = "3s"
+    max_lines     = 1000
+  }
+}
+
+// Loki write configuration with production settings
+loki.write "loki_cluster" {
+  endpoint {
+    url = "http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push"
+    
+    // Authentication if required
+    // basic_auth {
+    //   username = "your-username"
+    //   password = "your-password"
+    // }
+
+    // Headers for additional metadata
+    headers = {
+      "X-Scope-OrgID" = "tenant1"  // Multi-tenancy support
+    }
+  }
+
+  // External labels applied to all streams
+  external_labels = {
+    op_environment = "production"
+    region         = "eastus"
+    cluster        = "aks-production"
+    data_center    = "azure-aks"
+    team           = "platform"
+    alloy_instance = env("HOSTNAME")
+  }
+
+  // WAL configuration for durability
+  // Option 1: Use persistent volume (recommended for production)
+  wal {
+    dir                   = "/data/loki-wal"  // Mount persistent volume here
+    max_segment_age       = "2h"
+    max_segments          = 10
+    truncate_frequency    = "2h"
+  }
+
+  // Option 2: Disable WAL for Deployment (less reliable but simpler)
+  // wal {
+  //   disabled = true
+  // }
+
+  // Performance and reliability settings
+  max_streams           = 5000
+  max_line_size         = "256KB"
+  max_line_size_truncate = true
+
+  // Retry configuration
+  retry_config {
+    max_retries = 10
+    min_period  = "500ms"
+    max_period  = "5m"
+  }
+
+  // Batch configuration for better throughput
+  batch_config {
+    max_size    = "1MB"
+    max_wait    = "1s"
+    timeout     = "10s"
+  }
+
+  // Queue configuration
+  queue_config {
+    capacity            = 10000
+    max_shards          = 200
+    min_shards          = 1
+    max_samples_per_send = 2000
+    batch_send_deadline  = "5s"
+    min_backoff          = "30ms"
+    max_backoff          = "5s"
+  }
+}
