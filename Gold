@@ -1,0 +1,43 @@
+GitLab Story: Connect with Golden Path Team for Observability Integration
+Title:
+Enhance Golden Path 12 Factor Model with Comprehensive Observability
+
+Description:
+As part of the organization's ongoing Golden Path initiative, our teams currently leverage the 12 Factor App methodology to ensure robust, cloud-native app development. To further advance operational excellence, it is vital to extend this model with full-stack observability—incorporating not just logs but also distributed tracing, metrics, and standardized telemetry.
+
+Acceptance Criteria:
+
+Engage the Golden Path team to discuss and align on observability standards.
+
+Conduct an assessment of current logging (Factor 11) implementations.
+
+Advise on integrating OpenTelemetry across all services for unified logs, metrics, and traces.
+
+Develop GitLab observability dashboards using standardized templates.
+
+Document recommended instrumentation and ensure parity with production (Dev-Prod Parity).
+
+Provide reference implementation or CI/CD example illustrating observability in the full release lifecycle.
+
+Considerations for Implementing Observability
+Principles & Requirements
+The existing 12 Factor App model mainly prescribes logging via stdout, leaving collection and processing to the platform.
+
+Modern observability encompasses structured logs, metrics, traces, error tracking, and performance indicators, which should be standardized across all microservices.
+
+Ensure compatibility and ease of onboarding for all developers and service teams.
+
+Technical Strategy
+Adopt OpenTelemetry: Instrument all services using language-specific OpenTelemetry SDKs to capture logs, traces, and metrics uniformly. Configure export to the organization's chosen observability back-end (such as GitLab Observability).
+
+Update Build and Deployment Pipelines: Modify CI/CD pipelines to ensure observability is enabled by default and telemetry endpoints are configured via environment variables.
+
+Centralized Dashboards: Create and maintain GitLab observability dashboards that visualize operational health and bottlenecks using available templates and custom queries.
+
+Standardized Logging: Enforce structured logging (e.g., JSON format) and consistent use of service identifiers for easier aggregation and analysis.
+
+Distributed Tracing: Enable tracing of requests across services to identify latency and root cause issues, exposing relevant metadata within dashboards.
+
+Metrics Collection: Track application performance (CPU, memory, error rates, etc.) and make insights visible to both dev and ops teams.
+
+Incident Response: Tight integration with incident management lets teams correlate deployments with observed anomalies, accelerating troubleshooting and postmortem reviews.
