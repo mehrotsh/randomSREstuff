@@ -1,0 +1,430 @@
+# Industry Standard VM Monitoring Setup
+# Grafana Agent -> Mimir -> Grafana Alerting
+
+# =========================================
+# 1. GRAFANA AGENT CONFIGURATION
+# =========================================
+# /etc/grafana-agent/agent.yaml
+
+integrations:
+  # Node Exporter Integration (Industry Standard)
+  node_exporter:
+    enabled: true
+    # Standard VM metrics collection
+    include_exporter_metrics: true
+    disable_collectors:
+      - "mdadm"  # Not needed for most VMs
+    # Enable filesystem metrics for disk monitoring
+    filesystem:
+      ignored_mount_points: "^/(dev|proc|sys|var/lib/docker/.+)($|/)"
+      ignored_fs_types: "^(autofs|binfmt_misc|cgroup|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|sysfs|tracefs)$"
+
+  # Process Exporter for critical services
+  process_exporter:
+    enabled: true
+    process_names:
+      - grafana-agent
+      - systemd
+      - sshd
+
+metrics:
+  global:
+    scrape_interval: 15s        # Industry standard
+    evaluation_interval: 15s
+    external_labels:
+      cluster: 'azure-prod'
+      region: '${AZURE_REGION}'
+      environment: '${ENVIRONMENT}'
+  
+  configs:
+    - name: vm_monitoring
+      # Self-monitoring (critical for detecting agent failures)
+      scrape_configs:
+        # Self-scraping - Industry Standard Practice
+        - job_name: 'grafana-agent'
+          static_configs:
+            - targets: ['localhost:12345']
+          scrape_interval: 15s
+          metrics_path: /metrics
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: instance
+              replacement: '${HOSTNAME}'
+            - target_label: job
+              replacement: 'grafana-agent'
+
+        # Node Exporter - Core VM Metrics
+        - job_name: 'node-exporter'
+          static_configs:
+            - targets: ['localhost:9100']
+          scrape_interval: 15s
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: instance
+              replacement: '${HOSTNAME}'
+            - target_label: vm_type
+              replacement: 'azure-vm'
+            - target_label: vm_name
+              replacement: '${HOSTNAME}'
+
+        # Windows Exporter (if Windows VMs)
+        - job_name: 'windows-exporter'
+          static_configs:
+            - targets: ['localhost:9182']
+          scrape_interval: 30s
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: instance
+              replacement: '${HOSTNAME}'
+
+      # Send to Mimir
+      remote_write:
+        - url: ${MIMIR_ENDPOINT}/api/v1/push
+          headers:
+            X-Scope-OrgID: ${TENANT_ID}
+          queue_config:
+            capacity: 10000
+            max_samples_per_send: 5000
+          metadata_config:
+            send: true
+
+---
+
+# =========================================
+# 2. RECORDING RULES (Mimir Configuration)
+# =========================================
+# Standard recording rules for VM monitoring
+
+groups:
+  - name: vm.availability.rules
+    interval: 30s
+    rules:
+      # Industry standard: VM inventory with metadata
+      - record: vm:up
+        expr: |
+          label_replace(
+            label_replace(
+              up{job=~"node-exporter|grafana-agent|windows-exporter"},
+              "vm_name", "$1", "instance", "([^.:]+).*"
+            ),
+            "short_name", "$1", "instance", "([^.]+).*"
+          )
+
+      # VM availability percentage (SLI metric)
+      - record: vm:availability:rate5m
+        expr: |
+          avg_over_time(vm:up[5m])
+
+      # Count of down VMs per environment
+      - record: vm:down:count
+        expr: |
+          count by (environment, region) (vm:up == 0)
+
+  - name: vm.performance.rules
+    interval: 30s
+    rules:
+      # CPU utilization
+      - record: vm:cpu_usage_percent
+        expr: |
+          100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+      # Memory utilization
+      - record: vm:memory_usage_percent
+        expr: |
+          100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+
+      # Disk usage
+      - record: vm:disk_usage_percent
+        expr: |
+          100 * (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"}))
+
+---
+
+# =========================================
+# 3. ALERTING RULES (Industry Standard)
+# =========================================
+
+groups:
+  - name: vm.availability.alerts
+    rules:
+      # Primary VM Down Alert - Industry Standard
+      - alert: VMInstanceDown
+        expr: vm:up == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+          service: infrastructure
+          alert_type: availability
+        annotations:
+          summary: "VM {{ $labels.instance }} is down"
+          description: |
+            VM instance {{ $labels.instance }} has been down for more than 2 minutes.
+            
+            Instance: {{ $labels.instance }}
+            Environment: {{ $labels.environment }}
+            Region: {{ $labels.region }}
+            
+            Runbook: https://runbooks.company.com/vm-down
+          runbook_url: "https://runbooks.company.com/vm-down"
+
+      # VM Missing/Unreachable - Handles metric absence
+      - alert: VMInstanceMissing
+        expr: |
+          absent_over_time(vm:up[5m]) 
+          and 
+          (vm:up offset 10m) == 1
+        for: 3m
+        labels:
+          severity: critical
+          team: sre
+          service: infrastructure
+          alert_type: availability
+        annotations:
+          summary: "VM {{ $labels.instance }} metrics missing"
+          description: |
+            VM {{ $labels.instance }} has stopped sending metrics for 5+ minutes.
+            This typically indicates the VM is down or the monitoring agent has failed.
+
+      # Grafana Agent Down - Meta-monitoring
+      - alert: GrafanaAgentDown
+        expr: up{job="grafana-agent"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: sre
+          service: monitoring
+        annotations:
+          summary: "Grafana Agent down on {{ $labels.instance }}"
+          description: "Grafana Agent is not running on {{ $labels.instance }}"
+
+      # High severity performance alerts
+      - alert: VMHighCPUUsage
+        expr: vm:cpu_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+
+      - alert: VMHighMemoryUsage
+        expr: vm:memory_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+
+      - alert: VMHighDiskUsage
+        expr: vm:disk_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+
+---
+
+# =========================================
+# 4. GRAFANA UNIFIED ALERTING CONFIGURATION
+# =========================================
+
+apiVersion: 1
+groups:
+  - name: vm_availability_unified
+    folder: Infrastructure
+    interval: 30s
+    rules:
+      - uid: vm_down_unified
+        title: "VM Instance Unavailable"
+        condition: C
+        data:
+          # Query A: Current VM status from Mimir
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasource:
+              type: prometheus
+              uid: "${MIMIR_DATASOURCE_UID}"
+            model:
+              expr: 'vm:up'
+              interval: "30s"
+              refId: A
+
+          # Query B: Check for absent VMs
+          - refId: B
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasource:
+              type: prometheus
+              uid: "${MIMIR_DATASOURCE_UID}"
+            model:
+              expr: |
+                (
+                  # Explicitly down VMs
+                  vm:up == 0
+                  or
+                  # Missing VMs (stopped sending metrics)
+                  absent_over_time(vm:up[5m])
+                )
+              interval: "30s"
+              refId: B
+
+          # Query C: Final condition with enhanced labeling
+          - refId: C
+            queryType: ""
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasource:
+              type: prometheus
+              uid: "${MIMIR_DATASOURCE_UID}"
+            model:
+              expr: |
+                (
+                  vm:up == 0
+                  or
+                  (
+                    absent_over_time(vm:up[5m])
+                    and
+                    (vm:up offset 10m) == 1
+                  )
+                ) * on(instance) group_left(vm_name, environment, region)
+                (
+                  vm:up 
+                  or 
+                  (vm:up offset 10m)
+                )
+              interval: "30s"
+              refId: C
+
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          description: |
+            **🚨 VM Instance Down**
+            
+            **VM:** {{ $labels.vm_name | default $labels.instance }}
+            **Environment:** {{ $labels.environment }}
+            **Region:** {{ $labels.region }}
+            **Status:** {{ if eq $value 0.0 }}Down{{ else }}Missing Metrics{{ end }}
+            
+            **Investigation Steps:**
+            1. Check Azure portal for VM status
+            2. Verify VM is running and accessible
+            3. Check Grafana Agent logs: `sudo journalctl -u grafana-agent -f`
+            4. Verify network connectivity
+            5. Check system resources (CPU, Memory, Disk)
+            
+            **Escalation:** If unresolved after 15 minutes, page on-call engineer
+          runbook_url: "https://runbooks.company.com/vm-availability"
+          summary: "VM {{ $labels.vm_name | default $labels.instance }} is unavailable"
+        labels:
+          severity: critical
+          team: sre
+          service: infrastructure
+          environment: "{{ $labels.environment }}"
+          runbook: vm-availability
+
+---
+
+# =========================================
+# 5. NOTIFICATION CONFIGURATION
+# =========================================
+
+# Contact points
+contactPoints:
+  - name: sre-team
+    receivers:
+      # Slack for immediate notification
+      - uid: slack-sre
+        type: slack
+        settings:
+          url: "${SLACK_WEBHOOK_URL}"
+          channel: "#sre-alerts"
+          title: "🚨 {{ .GroupLabels.alertname }}"
+          text: |
+            **Alert:** {{ .GroupLabels.alertname }}
+            **Severity:** {{ .GroupLabels.severity }}
+            **Environment:** {{ .GroupLabels.environment }}
+            
+            {{ range .Alerts }}
+            **VM:** {{ .Labels.vm_name | default .Labels.instance }}
+            **Status:** {{ .Annotations.summary }}
+            **Duration:** {{ .StartsAt | since }}
+            **Runbook:** {{ .Annotations.runbook_url }}
+            {{ end }}
+
+      # PagerDuty for critical alerts
+      - uid: pagerduty-sre
+        type: pagerduty
+        settings:
+          integrationKey: "${PAGERDUTY_INTEGRATION_KEY}"
+          severity: "{{ .GroupLabels.severity }}"
+          component: "{{ .GroupLabels.service }}"
+
+# Notification policies
+notificationPolicies:
+  - receiver: sre-team
+    group_by: ['alertname', 'environment']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    matchers:
+      - alertname =~ "VM.*"
+    routes:
+      # Critical alerts go to PagerDuty immediately
+      - receiver: sre-team
+        group_wait: 10s
+        repeat_interval: 30m
+        matchers:
+          - severity = critical
+        continue: true
+
+---
+
+# =========================================
+# 6. DASHBOARDS CONFIGURATION
+# =========================================
+
+# Standard VM Overview Dashboard
+dashboards:
+  - title: "VM Infrastructure Overview"
+    panels:
+      - title: "VM Availability"
+        type: stat
+        targets:
+          - expr: 'count(vm:up == 1) / count(vm:up) * 100'
+            legendFormat: "Availability %"
+      
+      - title: "VMs Down"
+        type: stat
+        targets:
+          - expr: 'count(vm:up == 0)'
+            legendFormat: "Down VMs"
+      
+      - title: "VM Status Over Time"
+        type: timeseries
+        targets:
+          - expr: 'vm:up'
+            legendFormat: "{{ instance }}"
+
+      - title: "CPU Usage"
+        type: timeseries
+        targets:
+          - expr: 'vm:cpu_usage_percent'
+            legendFormat: "{{ instance }}"
+
+      - title: "Memory Usage"
+        type: timeseries
+        targets:
+          - expr: 'vm:memory_usage_percent'
+            legendFormat: "{{ instance }}"
