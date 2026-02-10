@@ -1,0 +1,3083 @@
+I'll help you create an API call to list all running pods on your Kubernetes cluster using the Claude API (similar to HolmesGPT's approach).
+
+Here's a complete example showing how to make a chat API call that executes kubectl commands:
+
+```python
+import anthropic
+import subprocess
+import json
+
+def get_running_pods():
+    """Get all running pods from local Kubernetes cluster"""
+    try:
+        result = subprocess.run(
+            ['kubectl', 'get', 'pods', '--all-namespaces', '-o', 'json'],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+
+# Initialize the Anthropic client
+client = anthropic.Anthropic(
+    api_key="your-api-key-here"
+)
+
+# Get pod information
+pods_data = get_running_pods()
+
+# Make the API call
+message = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=1000,
+    messages=[
+        {
+            "role": "user",
+            "content": f"""I have a Kubernetes cluster running locally with application pods and HolmesGPT.
+            
+Here is the current pod status:
+
+{pods_data}
+
+Please analyze this and list all running pods, organized by namespace."""
+        }
+    ]
+)
+
+print(message.content[0].text)
+```
+
+**Alternative: Using tool calling for more interactive analysis**
+
+```python
+import anthropic
+import subprocess
+import json
+
+def execute_kubectl(command):
+    """Execute kubectl commands"""
+    try:
+        result = subprocess.run(
+            command.split(),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        return f"Error: {e.stderr}"
+
+client = anthropic.Anthropic(api_key="your-api-key-here")
+
+# Define tools
+tools = [
+    {
+        "name": "kubectl_get",
+        "description": "Execute kubectl get commands to retrieve Kubernetes resources",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "resource": {
+                    "type": "string",
+                    "description": "The resource type (e.g., pods, deployments, services)"
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "The namespace (use --all-namespaces for all)"
+                },
+                "output": {
+                    "type": "string",
+                    "description": "Output format (json, yaml, wide)"
+                }
+            },
+            "required": ["resource"]
+        }
+    }
+]
+
+# Initial message
+messages = [
+    {
+        "role": "user",
+        "content": "List all running pods in my local Kubernetes cluster, including both application pods and HolmesGPT pods."
+    }
+]
+
+# Conversation loop
+while True:
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        tools=tools,
+        messages=messages
+    )
+    
+    print(f"\nStop Reason: {response.stop_reason}")
+    
+    if response.stop_reason == "end_turn":
+        # Print final response
+        for block in response.content:
+            if hasattr(block, "text"):
+                print(f"\nClaude: {block.text}")
+        break
+    
+    if response.stop_reason == "tool_use":
+        # Add assistant's response to messages
+        messages.append({
+            "role": "assistant",
+            "content": response.content
+        })
+        
+        # Process tool calls
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_name = block.name
+                tool_input = block.input
+                
+                print(f"\nTool Called: {tool_name}")
+                print(f"Input: {json.dumps(tool_input, indent=2)}")
+                
+                # Execute kubectl command
+                namespace_flag = f"--namespace={tool_input.get('namespace', 'default')}" if tool_input.get('namespace') != '--all-namespaces' else '--all-namespaces'
+                output_flag = f"-o {tool_input.get('output', 'json')}"
+                
+                cmd = f"kubectl get {tool_input['resource']} {namespace_flag} {output_flag}"
+                result = execute_kubectl(cmd)
+                
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result
+                })
+        
+        # Add tool results to messages
+        messages.append({
+            "role": "user",
+            "content": tool_results
+        })
+```
+
+**Simple curl example:**
+
+```bash
+# First, get the pod data
+PODS_JSON=$(kubectl get pods --all-namespaces -o json)
+
+# Make API call
+curl https://api.anthropic.com/v1/messages \
+  -H "content-type: application/json" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1000,
+    "messages": [
+      {
+        "role": "user",
+        "content": "List all running pods from this Kubernetes cluster data:\n\n'"$PODS_JSON"'"
+      }
+    ]
+  }'
+```
+
+The tool-calling approach (second example) is more similar to how HolmesGPT likely works - it allows Claude to interactively query your cluster as needed rather than getting all data upfront.
+
+
+
+
+
+
+................
+
+## HolmesGPT as a Service at Scale: Viability Analysis
+
+### ✅ **YES, it's viable** - but with important considerations:
+
+---
+
+## **Pros - Why It Works at Scale:**
+
+### 1. **Solves Real Pain Points**
+- Reduces MTTR (Mean Time To Resolve) for incidents
+- Democratizes Kubernetes troubleshooting (juniors can resolve issues)
+- 24/7 AI-powered incident analysis
+- Reduces on-call burden and alert fatigue
+
+### 2. **Cost-Effective at Scale**
+```
+Traditional approach:
+- Senior SRE time: $150-300/hour
+- Average incident: 2-4 hours
+- Cost per incident: $300-1200
+
+HolmesGPT approach:
+- API costs: ~$0.50-5 per investigation
+- Automated diagnosis: 5-15 minutes
+- Cost per incident: $1-10
+```
+
+### 3. **Scalability Benefits**
+- Single Holmes deployment can serve multiple clusters
+- Horizontal scaling with replicas
+- Multi-tenancy support (different teams/namespaces)
+- Integration with existing tools (Slack, PagerDuty, etc.)
+
+### 4. **Knowledge Retention**
+- Captures tribal knowledge
+- Consistent troubleshooting approach
+- New team members get instant expertise
+- Reduces dependency on specific individuals
+
+---
+
+## **Cons - Challenges at Scale:**
+
+### 1. **API Costs Can Grow**
+```python
+# Monthly cost estimate for large org
+incidents_per_day = 50
+avg_tokens_per_incident = 10000
+cost_per_1k_tokens = 0.003  # Claude Sonnet
+
+monthly_cost = incidents_per_day * 30 * (avg_tokens_per_incident / 1000) * cost_per_1k_tokens
+# = 50 * 30 * 10 * 0.003 = $450/month
+
+# Could reach $5K-20K/month for very large orgs
+```
+
+### 2. **Security & Compliance Concerns**
+- Cluster data sent to external APIs (Claude/OpenAI)
+- PII/sensitive data exposure risk
+- Compliance issues (GDPR, SOC2, HIPAA)
+- Need data sanitization pipelines
+
+### 3. **Accuracy & Reliability**
+- LLMs can hallucinate solutions
+- May provide incorrect troubleshooting steps
+- Requires human validation for critical systems
+- Not deterministic (different answers for same question)
+
+### 4. **Operational Overhead**
+- Requires dedicated ownership
+- Prompt engineering and tuning needed
+- Integration maintenance
+- Training teams on proper usage
+
+### 5. **Vendor Lock-in & Dependencies**
+- Relies on external LLM providers
+- API rate limits and availability
+- Cost changes from providers
+- Need fallback strategies
+
+---
+
+## **Architecture for Production Scale:**
+
+```yaml
+# Production-Ready Setup
+
+1. Multi-Cluster Support:
+   ┌─────────────┐
+   │  Prod-US    │──┐
+   └─────────────┘  │
+   ┌─────────────┐  │    ┌──────────────┐
+   │  Prod-EU    │──┼───▶│  HolmesGPT   │
+   └─────────────┘  │    │   Central    │
+   ┌─────────────┐  │    └──────────────┘
+   │  Staging    │──┘
+   └─────────────┘
+
+2. Components:
+   - Load balancer (distribute requests)
+   - Authentication/Authorization (RBAC)
+   - Rate limiting (per team/user)
+   - Caching layer (reduce API costs)
+   - Audit logging
+   - Data sanitization pipeline
+
+3. Integrations:
+   - Slack/Teams (chat interface)
+   - PagerDuty (auto-investigation)
+   - Grafana (context enrichment)
+   - ServiceNow (ticket creation)
+```
+
+---
+
+## **Cost Optimization Strategies:**
+
+### 1. **Caching**
+```python
+# Cache common questions/patterns
+cache_hit_rate = 0.3  # 30% of queries cached
+monthly_cost_with_cache = monthly_cost * (1 - cache_hit_rate)
+# $450 → $315/month (30% savings)
+```
+
+### 2. **Tiered Response**
+- Simple questions → Haiku (cheaper)
+- Complex analysis → Sonnet/Opus
+- Use local models for basic queries
+
+### 3. **Smart Batching**
+- Batch multiple related queries
+- Consolidate context sharing
+- Reduce redundant API calls
+
+---
+
+## **Security Best Practices:**
+
+```yaml
+Data Sanitization:
+  - Redact secrets/tokens from logs
+  - Remove PII from pod names/labels
+  - Mask IP addresses
+  - Filter sensitive environment variables
+
+Access Control:
+  - RBAC per namespace
+  - Audit all queries
+  - Rate limiting per user/team
+  - MFA for production access
+
+Self-Hosted Option:
+  - Use local LLM (Llama, Mistral)
+  - Deploy in air-gapped environments
+  - Higher infra cost, lower API cost
+  - Full data control
+```
+
+---
+
+## **When HolmesGPT Makes Sense:**
+
+### ✅ **Good Fit:**
+- Large engineering orgs (100+ engineers)
+- High incident volume
+- Complex Kubernetes environments
+- 24/7 operations
+- Skills gap in team
+- Multi-region deployments
+
+### ❌ **Not Ideal:**
+- Small teams (<10 engineers)
+- Simple deployments
+- Strict data residency requirements
+- Limited budget
+- Highly regulated industries (without sanitization)
+
+---
+
+## **Alternative Approaches:**
+
+```
+1. **Hybrid Model:**
+   - HolmesGPT for dev/staging
+   - Manual SRE for production
+   - Gradual rollout
+
+2. **Self-Hosted LLM:**
+   - Deploy Llama/Mistral locally
+   - Higher infra cost, zero API cost
+   - Full data control
+
+3. **Build vs Buy:**
+   - Build custom solution with Claude API
+   - Tailored to your needs
+   - More development effort
+
+4. **Commercial Alternatives:**
+   - Robusta Platform (Holmes creators' SaaS)
+   - K8sGPT
+   - Other AIOps platforms
+```
+
+---
+
+## **Recommended Implementation Path:**
+
+```
+Phase 1 (Month 1-2): Pilot
+├─ Deploy in dev/staging only
+├─ 1-2 teams as beta users
+├─ Measure: MTTR reduction, usage, costs
+└─ Gather feedback
+
+Phase 2 (Month 3-4): Limited Production
+├─ Non-critical production clusters
+├─ Implement security controls
+├─ Cost optimization (caching)
+└─ Integration with Slack/PagerDuty
+
+Phase 3 (Month 5-6): Full Rollout
+├─ All production environments
+├─ Self-service for all teams
+├─ Advanced features (auto-remediation)
+└─ Ongoing optimization
+
+Phase 4 (Ongoing): Mature
+├─ Custom knowledge base
+├─ Team-specific prompts
+├─ Automated runbook execution
+└─ Continuous improvement
+```
+
+---
+
+## **Bottom Line:**
+
+**HolmesGPT IS viable at scale IF:**
+
+✅ You have proper security controls  
+✅ Budget for API costs ($500-10K/month)  
+✅ Team buy-in and training  
+✅ Clear ROI from MTTR reduction  
+✅ Fallback plans for critical incidents  
+
+**ROI Calculation:**
+```
+Savings: 2 hours/incident * 50 incidents/month * $200/hour = $20K/month
+Cost: $2K/month (API + infra)
+Net benefit: $18K/month = $216K/year
+```
+
+For most **mid-to-large organizations** (50+ engineers, complex K8s), the ROI is clear. Start with a pilot, measure results, then scale.
+
+
+...............
+
+## HolmesGPT for VM-Based Apps: **Limited Support**
+
+### **Short Answer:** 
+HolmesGPT is **primarily designed for Kubernetes** and has **limited/experimental support** for VMs. It's not the ideal tool for traditional VM infrastructure.
+
+---
+
+## **Current State:**
+
+### ✅ **What HolmesGPT CAN Do for VMs:**
+
+1. **Basic Log Analysis**
+   - If you can feed VM logs to Holmes, it can analyze them
+   - Works via API/CLI with manual log input
+   ```bash
+   # Manual approach
+   holmes ask "analyze this error log" --context "$(cat /var/log/app.log)"
+   ```
+
+2. **General Troubleshooting Advice**
+   - Generic Linux/Windows troubleshooting
+   - Application-level debugging
+   - But lacks VM-specific context
+
+3. **Hybrid Environments**
+   - If apps run on VMs but orchestrated by Kubernetes (kubevirt)
+   - Limited usefulness
+
+### ❌ **What HolmesGPT CANNOT Do Well for VMs:**
+
+1. **No Native VM Integration**
+   - Doesn't connect to VMware, AWS EC2, Azure VMs automatically
+   - Can't query VM metrics directly
+   - No hypervisor API integration
+
+2. **Missing VM-Specific Context**
+   - Can't check CPU/memory on VMs automatically
+   - No disk I/O analysis
+   - Can't inspect VM network configs
+   - No access to VM events/logs natively
+
+3. **No Auto-Discovery**
+   - Doesn't discover VMs like it does pods
+   - Can't automatically collect VM state
+   - Requires manual data gathering
+
+---
+
+## **Architecture Comparison:**
+
+### **Kubernetes (Native Support):**
+```
+HolmesGPT
+    ↓ (Kubernetes API)
+    ├─ Auto-discovers pods
+    ├─ Reads logs automatically
+    ├─ Checks events
+    ├─ Analyzes metrics
+    ├─ Inspects configs
+    └─ Full context gathering
+```
+
+### **VMs (Limited/Manual):**
+```
+HolmesGPT
+    ↓ (Manual Input Required)
+    ├─ ❌ No auto-discovery
+    ├─ ❌ Manual log collection
+    ├─ ❌ No event integration
+    ├─ ❌ Manual metric gathering
+    └─ ⚠️  Operates like generic ChatGPT
+```
+
+---
+
+## **Workarounds for VM Environments:**
+
+### Option 1: **Manual Data Collection + Holmes API**
+
+```bash
+#!/bin/bash
+# Collect VM diagnostics and send to Holmes
+
+# Gather VM data
+VM_DATA=$(cat <<EOF
+CPU Usage: $(top -bn1 | grep "Cpu(s)" | awk '{print $2}')
+Memory: $(free -h)
+Disk: $(df -h)
+Recent Errors: $(tail -100 /var/log/syslog | grep -i error)
+Application Logs: $(tail -200 /var/log/myapp/app.log)
+EOF
+)
+
+# Query Holmes
+holmes ask "My application on VM is crashing. Here's the diagnostics: $VM_DATA"
+```
+
+### Option 2: **Build Custom Integration**
+
+```python
+# Custom VM monitoring → Holmes pipeline
+import anthropic
+import subprocess
+
+def get_vm_metrics():
+    """Collect VM diagnostics"""
+    return {
+        'cpu': subprocess.check_output(['top', '-bn1']),
+        'memory': subprocess.check_output(['free', '-h']),
+        'logs': subprocess.check_output(['tail', '-100', '/var/log/app.log']),
+        'processes': subprocess.check_output(['ps', 'aux'])
+    }
+
+def analyze_vm_issue(metrics):
+    client = anthropic.Anthropic(api_key="your-key")
+    
+    prompt = f"""
+    Analyze this VM issue:
+    
+    CPU: {metrics['cpu']}
+    Memory: {metrics['memory']}
+    Recent Logs: {metrics['logs']}
+    Processes: {metrics['processes']}
+    
+    What's wrong and how to fix it?
+    """
+    
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    return response.content[0].text
+
+# Run analysis
+metrics = get_vm_metrics()
+diagnosis = analyze_vm_issue(metrics)
+print(diagnosis)
+```
+
+### Option 3: **Use Agent-Based Approach**
+
+```yaml
+# Deploy lightweight agent on VMs
+┌──────────────┐
+│   VM Fleet   │
+│              │
+│  ┌─────────┐ │
+│  │ Agent   │─┼──┐
+│  └─────────┘ │  │
+│  ┌─────────┐ │  │  ┌──────────────┐
+│  │ Agent   │─┼──┼─▶│  Central     │
+│  └─────────┘ │  │  │  Aggregator  │
+│  ┌─────────┐ │  │  └──────────────┘
+│  │ Agent   │─┼──┘         │
+│  └─────────┘ │            ▼
+└──────────────┘     ┌──────────────┐
+                     │  HolmesGPT   │
+                     │  API         │
+                     └──────────────┘
+```
+
+---
+
+## **Better Alternatives for VM-Based Apps:**
+
+### 1. **Traditional Monitoring + AI Analysis**
+
+| Tool | Purpose | AI Integration |
+|------|---------|----------------|
+| **Datadog** | Full VM monitoring | Native AIOps, Watchdog |
+| **New Relic** | APM + Infrastructure | AI-powered insights |
+| **Dynatrace** | Auto-discovery, RCA | Davis AI engine |
+| **Splunk** | Log aggregation | AI-driven anomaly detection |
+
+### 2. **Build Custom Solution with Claude API**
+
+```python
+# Better approach: Custom VM troubleshooting assistant
+
+class VMTroubleshooter:
+    def __init__(self):
+        self.client = anthropic.Anthropic()
+        
+    def collect_diagnostics(self, vm_id):
+        """Integrate with your VM management platform"""
+        # Connect to VMware/AWS/Azure APIs
+        # Collect metrics, logs, events
+        pass
+    
+    def analyze(self, vm_id):
+        diagnostics = self.collect_diagnostics(vm_id)
+        
+        # Use Claude with full context
+        response = self.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            messages=[{
+                "role": "user",
+                "content": f"VM diagnostics: {diagnostics}. What's wrong?"
+            }]
+        )
+        
+        return response.content[0].text
+```
+
+### 3. **Hybrid Architecture**
+
+```
+┌─────────────────────────────────────┐
+│         Your Organization           │
+│                                     │
+│  Kubernetes Apps                    │
+│  ├─ HolmesGPT (native support) ✅  │
+│                                     │
+│  VM-Based Apps                      │
+│  ├─ Datadog/Dynatrace          ✅  │
+│  └─ Custom Claude integration  ⚠️   │
+└─────────────────────────────────────┘
+```
+
+---
+
+## **Future Possibilities:**
+
+HolmesGPT **could** support VMs if:
+
+1. **Custom Integrations Built:**
+   - VMware vSphere integration
+   - AWS EC2 Systems Manager
+   - Azure VM Insights
+   - GCP Compute Engine
+
+2. **Community Extensions:**
+   - Someone builds VM plugins
+   - Open source contributions
+
+3. **Commercial Evolution:**
+   - Robusta (Holmes creators) expand scope
+   - Multi-platform support
+
+---
+
+## **Recommendation:**
+
+### For VM-Based Infrastructure:
+
+**Don't use HolmesGPT** - Instead:
+
+1. **For Large Enterprises:**
+   - Use Dynatrace/Datadog with built-in AI
+   - Mature, proven for VMs
+   - Better ROI
+
+2. **For Mid-Size Orgs:**
+   - Build custom troubleshooting with Claude API
+   - Integrate with existing monitoring
+   - More control, lower cost
+
+3. **For Hybrid (K8s + VMs):**
+   - HolmesGPT for Kubernetes workloads ✅
+   - Traditional monitoring for VMs ✅
+   - Separate tools for separate needs
+
+### Cost Comparison:
+
+```
+HolmesGPT for VMs (Manual):
+- Development: 40-80 hours
+- Maintenance: High
+- Accuracy: Medium
+- Cost: $2K-5K/month
+- ROI: Questionable ❌
+
+Dynatrace for VMs:
+- Setup: 4-8 hours
+- Maintenance: Low
+- Accuracy: High
+- Cost: $5K-15K/month
+- ROI: Proven ✅
+
+Custom Claude Solution:
+- Development: 80-160 hours
+- Maintenance: Medium
+- Accuracy: High
+- Cost: $1K-3K/month
+- ROI: Good if you have dev resources ✅
+```
+
+---
+
+## **Bottom Line:**
+
+❌ **HolmesGPT is NOT viable for VM-based apps at scale**
+
+**Why?**
+- No native VM integration
+- Requires manual data collection
+- Better alternatives exist (Datadog, Dynatrace)
+- HolmesGPT's strength is Kubernetes auto-discovery
+
+**Use HolmesGPT for:** Kubernetes workloads  
+**Use Dynatrace/Datadog for:** VM workloads  
+**Build custom with Claude API for:** Specific hybrid needs
+
+If you're running VMs, invest in proper VM monitoring tools with AI, not HolmesGPT.
+
+
+
+
+
+
+
+...........
+## Complete HolmesGPT Multi-Environment Access Setup
+
+Here's a comprehensive guide to connecting HolmesGPT to Kubernetes, VMs, Grafana LGTM stack, and Backstage documentation.
+
+---
+
+## **Architecture Overview**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      HolmesGPT Core                         │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │         LLM Provider (Claude/OpenAI)                 │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                            │                                │
+│         ┌──────────────────┼──────────────────┐            │
+│         ▼                  ▼                  ▼            │
+│  ┌──────────┐      ┌──────────┐      ┌──────────┐         │
+│  │   K8s    │      │   LGTM   │      │Backstage │         │
+│  │Connector │      │Connector │      │Connector │         │
+│  └──────────┘      └──────────┘      └──────────┘         │
+│         │                  │                  │            │
+└─────────┼──────────────────┼──────────────────┼────────────┘
+          │                  │                  │
+          ▼                  ▼                  ▼
+   ┌──────────┐      ┌──────────────┐   ┌──────────────┐
+   │K8s Cluster│      │ LGTM Stack   │   │  Backstage   │
+   │  + VMs    │      │ - Loki       │   │  Catalog     │
+   └──────────┘      │ - Grafana    │   └──────────────┘
+                     │ - Tempo      │
+                     │ - Mimir      │
+                     └──────────────┘
+```
+
+---
+
+## **1. Kubernetes Cluster Access**
+
+### **Option A: In-Cluster Deployment (Recommended)**
+
+```yaml
+# holmesgpt-deployment.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: holmesgpt
+  namespace: holmesgpt
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: holmesgpt-role
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - events
+      - services
+      - configmaps
+      - nodes
+      - persistentvolumeclaims
+      - namespaces
+    verbs: ["get", "list", "watch"]
+  
+  # Workloads
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  
+  # Jobs
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  
+  # Networking
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs: ["get", "list", "watch"]
+  
+  # Metrics
+  - apiGroups: ["metrics.k8s.io"]
+    resources:
+      - pods
+      - nodes
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: holmesgpt-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: holmesgpt-role
+subjects:
+  - kind: ServiceAccount
+    name: holmesgpt
+    namespace: holmesgpt
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmesgpt
+  namespace: holmesgpt
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: holmesgpt
+  template:
+    metadata:
+      labels:
+        app: holmesgpt
+    spec:
+      serviceAccountName: holmesgpt
+      containers:
+        - name: holmesgpt
+          image: ghcr.io/robusta-dev/holmesgpt:latest
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: holmesgpt-secrets
+                  key: anthropic-api-key
+            
+            # Kubernetes API will be auto-discovered
+            - name: KUBERNETES_SERVICE_HOST
+              value: kubernetes.default.svc
+            
+            - name: KUBERNETES_SERVICE_PORT
+              value: "443"
+          
+          resources:
+            requests:
+              cpu: 2000m
+              memory: 4Gi
+            limits:
+              cpu: 4000m
+              memory: 8Gi
+          
+          ports:
+            - containerPort: 8080
+              name: http
+```
+
+### **Option B: External Access (Multiple Clusters)**
+
+```yaml
+# holmesgpt-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: holmesgpt-clusters
+  namespace: holmesgpt
+data:
+  clusters.yaml: |
+    clusters:
+      - name: prod-us-east
+        kubeconfig: /etc/kubeconfig/prod-us-east.yaml
+        context: prod-us-east-context
+        enabled: true
+        
+      - name: prod-eu-west
+        kubeconfig: /etc/kubeconfig/prod-eu-west.yaml
+        context: prod-eu-west-context
+        enabled: true
+      
+      - name: staging
+        kubeconfig: /etc/kubeconfig/staging.yaml
+        context: staging-context
+        enabled: true
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: holmesgpt-kubeconfigs
+  namespace: holmesgpt
+type: Opaque
+data:
+  # Base64 encoded kubeconfig files
+  prod-us-east.yaml: <base64-encoded-kubeconfig>
+  prod-eu-west.yaml: <base64-encoded-kubeconfig>
+  staging.yaml: <base64-encoded-kubeconfig>
+
+---
+# Mount kubeconfigs in deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmesgpt
+spec:
+  template:
+    spec:
+      containers:
+        - name: holmesgpt
+          volumeMounts:
+            - name: kubeconfigs
+              mountPath: /etc/kubeconfig
+              readOnly: true
+            - name: cluster-config
+              mountPath: /etc/holmesgpt
+              readOnly: true
+      
+      volumes:
+        - name: kubeconfigs
+          secret:
+            secretName: holmesgpt-kubeconfigs
+        - name: cluster-config
+          configMap:
+            name: holmesgpt-clusters
+```
+
+---
+
+## **2. VM Access Integration**
+
+### **Option A: Prometheus Node Exporter (Recommended)**
+
+```yaml
+# Deploy node_exporter on VMs, scrape with Prometheus
+# Holmes reads VM metrics from Prometheus
+
+# On each VM:
+# Install node_exporter
+sudo useradd -rs /bin/false node_exporter
+wget https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+tar xvfz node_exporter-1.7.0.linux-amd64.tar.gz
+sudo mv node_exporter-1.7.0.linux-amd64/node_exporter /usr/local/bin/
+sudo systemctl enable node_exporter
+sudo systemctl start node_exporter
+
+# Prometheus scrape config
+scrape_configs:
+  - job_name: 'vms'
+    static_configs:
+      - targets:
+          - 'vm1.example.com:9100'
+          - 'vm2.example.com:9100'
+          - 'vm3.example.com:9100'
+        labels:
+          environment: production
+          type: vm
+```
+
+### **Option B: Custom VM Agent for Holmes**
+
+```python
+# vm-holmes-agent.py
+# Deploy on each VM to collect diagnostics
+
+import requests
+import psutil
+import subprocess
+import json
+import time
+
+class VMHolmesAgent:
+    def __init__(self, holmes_api_url, vm_id):
+        self.holmes_url = holmes_api_url
+        self.vm_id = vm_id
+        
+    def collect_metrics(self):
+        """Collect VM diagnostics"""
+        return {
+            'vm_id': self.vm_id,
+            'timestamp': time.time(),
+            'cpu': {
+                'percent': psutil.cpu_percent(interval=1),
+                'count': psutil.cpu_count(),
+                'load_avg': psutil.getloadavg()
+            },
+            'memory': {
+                'total': psutil.virtual_memory().total,
+                'available': psutil.virtual_memory().available,
+                'percent': psutil.virtual_memory().percent
+            },
+            'disk': [{
+                'device': disk.device,
+                'mountpoint': disk.mountpoint,
+                'percent': psutil.disk_usage(disk.mountpoint).percent
+            } for disk in psutil.disk_partitions()],
+            'network': psutil.net_io_counters()._asdict(),
+            'processes': len(psutil.pids())
+        }
+    
+    def collect_logs(self, log_file='/var/log/syslog', lines=100):
+        """Collect recent logs"""
+        try:
+            result = subprocess.run(
+                ['tail', f'-{lines}', log_file],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.stdout
+        except Exception as e:
+            return f"Error collecting logs: {e}"
+    
+    def send_to_holmes(self):
+        """Send diagnostics to Holmes"""
+        data = {
+            'metrics': self.collect_metrics(),
+            'logs': self.collect_logs()
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.holmes_url}/api/v1/vm-diagnostics",
+                json=data,
+                timeout=10
+            )
+            return response.json()
+        except Exception as e:
+            print(f"Error sending to Holmes: {e}")
+            return None
+    
+    def run(self, interval=60):
+        """Run agent continuously"""
+        while True:
+            self.send_to_holmes()
+            time.sleep(interval)
+
+if __name__ == "__main__":
+    agent = VMHolmesAgent(
+        holmes_api_url="http://holmesgpt.monitoring.svc.cluster.local:8080",
+        vm_id="vm-prod-web-01"
+    )
+    agent.run()
+```
+
+### **Option C: Promtail for VM Logs → Loki**
+
+```yaml
+# promtail-config.yaml (on VMs)
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          host: ${HOSTNAME}
+          environment: production
+          __path__: /var/log/*.log
+  
+  - job_name: applications
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: applogs
+          host: ${HOSTNAME}
+          app: myapp
+          __path__: /var/log/myapp/*.log
+```
+
+---
+
+## **3. LGTM Stack Integration**
+
+### **Comprehensive LGTM Configuration:**
+
+```yaml
+# holmesgpt-lgtm-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: holmesgpt-lgtm
+  namespace: holmesgpt
+data:
+  lgtm.yaml: |
+    # Loki (Logs)
+    loki:
+      enabled: true
+      url: http://loki-gateway.monitoring.svc.cluster.local:3100
+      tenant_id: "" # For multi-tenant setups
+      
+      # Authentication (if required)
+      auth:
+        type: basic  # or bearer
+        username: admin
+        password_secret: loki-auth
+      
+      # Query settings
+      query:
+        max_entries: 5000
+        timeout: 30s
+        
+    # Grafana (Visualization + Dashboards)
+    grafana:
+      enabled: true
+      url: http://grafana.monitoring.svc.cluster.local:3000
+      
+      # API Token (create in Grafana UI)
+      auth:
+        type: token
+        token_secret: grafana-api-token
+      
+      # Dashboards to reference
+      dashboards:
+        - uid: kubernetes-cluster
+          name: "Kubernetes Cluster Overview"
+        - uid: node-exporter
+          name: "Node Exporter Full"
+        - uid: loki-logs
+          name: "Loki Logs"
+      
+    # Tempo (Traces)
+    tempo:
+      enabled: true
+      url: http://tempo-query-frontend.monitoring.svc.cluster.local:3100
+      
+      auth:
+        type: none
+      
+      query:
+        timeout: 30s
+    
+    # Mimir/Prometheus (Metrics)
+    mimir:
+      enabled: true
+      url: http://mimir-query-frontend.monitoring.svc.cluster.local:8080/prometheus
+      
+      # Or use Prometheus directly
+      prometheus_url: http://prometheus-server.monitoring.svc.cluster.local:9090
+      
+      auth:
+        type: none
+      
+      query:
+        timeout: 30s
+        step: 15s  # Scrape interval
+
+---
+# Secrets for authentication
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lgtm-auth
+  namespace: holmesgpt
+type: Opaque
+stringData:
+  loki-username: admin
+  loki-password: your-loki-password
+  grafana-api-token: glsa_your_grafana_token_here
+  tempo-token: ""
+```
+
+### **Holmes Deployment with LGTM:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmesgpt
+  namespace: holmesgpt
+spec:
+  template:
+    spec:
+      containers:
+        - name: holmesgpt
+          image: ghcr.io/robusta-dev/holmesgpt:latest
+          env:
+            # LGTM endpoints
+            - name: LOKI_URL
+              value: "http://loki-gateway.monitoring.svc.cluster.local:3100"
+            
+            - name: GRAFANA_URL
+              value: "http://grafana.monitoring.svc.cluster.local:3000"
+            
+            - name: GRAFANA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: lgtm-auth
+                  key: grafana-api-token
+            
+            - name: TEMPO_URL
+              value: "http://tempo-query-frontend.monitoring.svc.cluster.local:3100"
+            
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+          
+          volumeMounts:
+            - name: lgtm-config
+              mountPath: /etc/holmesgpt/lgtm
+              readOnly: true
+      
+      volumes:
+        - name: lgtm-config
+          configMap:
+            name: holmesgpt-lgtm
+```
+
+### **Custom Holmes Tool for LGTM Queries:**
+
+```python
+# holmes-lgtm-integration.py
+# Custom tool for Holmes to query LGTM stack
+
+import requests
+from datetime import datetime, timedelta
+
+class LGTMIntegration:
+    def __init__(self, config):
+        self.loki_url = config['loki']['url']
+        self.grafana_url = config['grafana']['url']
+        self.grafana_token = config['grafana']['token']
+        self.tempo_url = config['tempo']['url']
+        self.prometheus_url = config['prometheus']['url']
+    
+    def query_loki_logs(self, query, start_time=None, limit=100):
+        """Query Loki for logs"""
+        if not start_time:
+            start_time = datetime.now() - timedelta(hours=1)
+        
+        params = {
+            'query': query,
+            'limit': limit,
+            'start': int(start_time.timestamp() * 1e9),
+            'direction': 'backward'
+        }
+        
+        response = requests.get(
+            f"{self.loki_url}/loki/api/v1/query_range",
+            params=params
+        )
+        return response.json()
+    
+    def query_prometheus(self, query, start_time=None):
+        """Query Prometheus/Mimir for metrics"""
+        if not start_time:
+            start_time = datetime.now() - timedelta(hours=1)
+        
+        params = {
+            'query': query,
+            'start': start_time.isoformat(),
+            'end': datetime.now().isoformat(),
+            'step': '15s'
+        }
+        
+        response = requests.get(
+            f"{self.prometheus_url}/api/v1/query_range",
+            params=params
+        )
+        return response.json()
+    
+    def get_grafana_dashboard(self, dashboard_uid):
+        """Fetch dashboard definition"""
+        headers = {
+            'Authorization': f'Bearer {self.grafana_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.get(
+            f"{self.grafana_url}/api/dashboards/uid/{dashboard_uid}",
+            headers=headers
+        )
+        return response.json()
+    
+    def query_tempo_traces(self, trace_id=None, service_name=None):
+        """Query Tempo for traces"""
+        if trace_id:
+            response = requests.get(
+                f"{self.tempo_url}/api/traces/{trace_id}"
+            )
+        elif service_name:
+            params = {
+                'service.name': service_name,
+                'limit': 20
+            }
+            response = requests.get(
+                f"{self.tempo_url}/api/search",
+                params=params
+            )
+        
+        return response.json()
+    
+    def correlate_incident(self, pod_name, namespace, start_time):
+        """Correlate logs, metrics, and traces for an incident"""
+        
+        # 1. Get logs
+        log_query = f'{{namespace="{namespace}", pod=~"{pod_name}.*"}} |= "error" or "failed"'
+        logs = self.query_loki_logs(log_query, start_time)
+        
+        # 2. Get metrics
+        metric_query = f'rate(container_cpu_usage_seconds_total{{namespace="{namespace}", pod=~"{pod_name}.*"}}[5m])'
+        metrics = self.query_prometheus(metric_query, start_time)
+        
+        # 3. Get traces (if available)
+        traces = self.query_tempo_traces(service_name=pod_name.split('-')[0])
+        
+        return {
+            'logs': logs,
+            'metrics': metrics,
+            'traces': traces
+        }
+
+# Tool definition for Holmes
+tools = [{
+    "name": "query_lgtm",
+    "description": "Query LGTM stack (Loki, Grafana, Tempo, Mimir) for logs, metrics, traces",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "data_source": {
+                "type": "string",
+                "enum": ["loki", "prometheus", "tempo", "grafana"],
+                "description": "Which data source to query"
+            },
+            "query": {
+                "type": "string",
+                "description": "The query string (LogQL for Loki, PromQL for Prometheus)"
+            },
+            "time_range": {
+                "type": "string",
+                "description": "Time range (e.g., '1h', '24h', '7d')"
+            }
+        },
+        "required": ["data_source", "query"]
+    }
+}]
+```
+
+---
+
+## **4. Backstage Documentation Integration**
+
+### **Option A: Backstage API Integration**
+
+```yaml
+# holmesgpt-backstage-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: holmesgpt-backstage
+  namespace: holmesgpt
+data:
+  backstage.yaml: |
+    backstage:
+      enabled: true
+      url: http://backstage.platform.svc.cluster.local:7007
+      
+      # Authentication
+      auth:
+        type: token  # or service-to-service
+        token_secret: backstage-api-token
+      
+      # Catalog API
+      catalog:
+        enabled: true
+        api_url: http://backstage.platform.svc.cluster.local:7007/api/catalog
+        
+        # Entity types to index
+        entity_types:
+          - Component
+          - API
+          - System
+          - Domain
+          - Resource
+      
+      # TechDocs
+      techdocs:
+        enabled: true
+        api_url: http://backstage.platform.svc.cluster.local:7007/api/techdocs
+        
+        # Cache documentation
+        cache:
+          enabled: true
+          ttl: 3600  # 1 hour
+      
+      # Search API
+      search:
+        enabled: true
+        api_url: http://backstage.platform.svc.cluster.local:7007/api/search
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backstage-auth
+  namespace: holmesgpt
+type: Opaque
+stringData:
+  api-token: your-backstage-token-here
+```
+
+### **Option B: Custom Backstage Tool for Holmes**
+
+```python
+# holmes-backstage-integration.py
+
+import requests
+import json
+
+class BackstageIntegration:
+    def __init__(self, backstage_url, api_token):
+        self.base_url = backstage_url
+        self.headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json'
+        }
+    
+    def search_catalog(self, query, entity_types=None):
+        """Search Backstage catalog"""
+        params = {'query': query}
+        if entity_types:
+            params['types'] = ','.join(entity_types)
+        
+        response = requests.get(
+            f"{self.base_url}/api/catalog/entities",
+            headers=self.headers,
+            params=params
+        )
+        return response.json()
+    
+    def get_component_docs(self, component_name):
+        """Get TechDocs for a component"""
+        # Find component
+        components = self.search_catalog(
+            component_name,
+            entity_types=['Component']
+        )
+        
+        if not components:
+            return None
+        
+        component = components[0]
+        namespace = component['metadata']['namespace']
+        kind = component['kind']
+        name = component['metadata']['name']
+        
+        # Get TechDocs
+        response = requests.get(
+            f"{self.base_url}/api/techdocs/default/{kind}/{namespace}/{name}/index.json",
+            headers=self.headers
+        )
+        return response.json()
+    
+    def get_api_definition(self, api_name):
+        """Get API definition from catalog"""
+        apis = self.search_catalog(api_name, entity_types=['API'])
+        
+        if not apis:
+            return None
+        
+        api = apis[0]
+        
+        # Get OpenAPI/AsyncAPI spec if available
+        if 'spec' in api and 'definition' in api['spec']:
+            return api['spec']['definition']
+        
+        return api
+    
+    def get_runbook(self, service_name):
+        """Get runbook/documentation for a service"""
+        # Search for component
+        component = self.search_catalog(service_name, entity_types=['Component'])
+        
+        if not component:
+            return None
+        
+        # Check for annotations with runbook links
+        annotations = component[0].get('metadata', {}).get('annotations', {})
+        
+        runbook_url = annotations.get('backstage.io/runbook-url')
+        docs_url = annotations.get('backstage.io/techdocs-ref')
+        
+        return {
+            'runbook_url': runbook_url,
+            'docs_url': docs_url,
+            'component': component[0]
+        }
+    
+    def search_techdocs(self, search_term):
+        """Search TechDocs content"""
+        response = requests.get(
+            f"{self.base_url}/api/search/query",
+            headers=self.headers,
+            params={
+                'term': search_term,
+                'types': 'techdocs'
+            }
+        )
+        return response.json()
+
+# Holmes tool definition
+backstage_tools = [
+    {
+        "name": "search_backstage_docs",
+        "description": "Search Backstage documentation and service catalog for runbooks, API docs, component info",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "search_type": {
+                    "type": "string",
+                    "enum": ["component", "api", "runbook", "techdocs"],
+                    "description": "Type of documentation to search"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query"
+                }
+            },
+            "required": ["search_type", "query"]
+        }
+    },
+    {
+        "name": "get_service_runbook",
+        "description": "Get runbook and operational documentation for a specific service",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service_name": {
+                    "type": "string",
+                    "description": "Name of the service/component"
+                }
+            },
+            "required": ["service_name"]
+        }
+    }
+]
+```
+
+### **Option C: Backstage Entity Annotations**
+
+```yaml
+# In your Backstage catalog-info.yaml
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: payment-service
+  annotations:
+    # HolmesGPT can read these
+    holmesgpt.io/enabled: "true"
+    holmesgpt.io/priority: "high"
+    holmesgpt.io/oncall-team: "payments-team"
+    
+    # Runbooks
+    backstage.io/runbook-url: "https://wiki.company.com/runbooks/payment-service"
+    
+    # TechDocs
+    backstage.io/techdocs-ref: "dir:."
+    
+    # Related resources
+    kubernetes.io/deployment: payment-service
+    prometheus.io/rule: payment-service-alerts
+    
+spec:
+  type: service
+  lifecycle: production
+  owner: payments-team
+  system: payment-platform
+  
+  # Dependencies
+  dependsOn:
+    - component:database-postgres
+    - component:redis-cache
+    - resource:payment-queue
+```
+
+---
+
+## **5. Complete Integration Architecture**
+
+```python
+# holmes-unified-integration.py
+# Main integration orchestrator
+
+import anthropic
+from kubernetes import client, config
+from lgtm_integration import LGTMIntegration
+from backstage_integration import BackstageIntegration
+from vm_integration import VMIntegration
+
+class HolmesUnifiedPlatform:
+    def __init__(self):
+        # Initialize Kubernetes
+        config.load_incluster_config()
+        self.k8s_v1 = client.CoreV1Api()
+        self.k8s_apps = client.AppsV1Api()
+        
+        # Initialize LGTM
+        self.lgtm = LGTMIntegration({
+            'loki': {'url': 'http://loki:3100'},
+            'grafana': {'url': 'http://grafana:3000', 'token': 'xxx'},
+            'tempo': {'url': 'http://tempo:3100'},
+            'prometheus': {'url': 'http://prometheus:9090'}
+        })
+        
+        # Initialize Backstage
+        self.backstage = BackstageIntegration(
+            'http://backstage:7007',
+            'backstage-token'
+        )
+        
+        # Initialize VM monitoring
+        self.vm = VMIntegration('http://prometheus:9090')
+        
+        # Initialize Claude
+        self.claude = anthropic.Anthropic()
+    
+    def investigate_incident(self, pod_name, namespace):
+        """Full investigation using all data sources"""
+        
+        # 1. Get K8s context
+        pod = self.k8s_v1.read_namespaced_pod(pod_name, namespace)
+        events = self.k8s_v1.list_namespaced_event(namespace)
+        
+        # 2. Get LGTM data
+        lgtm_data = self.lgtm.correlate_incident(
+            pod_name, namespace,
+            pod.metadata.creation_timestamp
+        )
+        
+        # 3. Get Backstage documentation
+        service_name = pod.metadata.labels.get('app', pod_name.split('-')[0])
+        docs = self.backstage.get_runbook(service_name)
+        
+        # 4. Check if running on VM (hybrid setup)
+        node_name = pod.spec.node_name
+        vm_metrics = self.vm.get_node_metrics(node_name)
+        
+        # 5. Compile context for Claude
+        context = {
+            'kubernetes': {
+                'pod': pod.to_dict(),
+                'events': [e.to_dict() for e in events.items]
+            },
+            'logs': lgtm_data['logs'],
+            'metrics': lgtm_data['metrics'],
+            'traces': lgtm_data['traces'],
+            'documentation': docs,
+            'vm_metrics': vm_metrics
+        }
+        
+        # 6. Ask Claude to analyze
+        tools = self._get_all_tools()
+        
+        response = self.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            tools=tools,
+            messages=[{
+                "role": "user",
+                "content": f"""
+                Investigate this incident:
+                
+                Pod: {pod_name} in namespace {namespace}
+                Status: {pod.status.phase}
+                
+                Available context:
+                - Kubernetes pod details and events
+                - Logs from Loki
+                - Metrics from Prometheus
+                - Traces from Tempo
+                - Service documentation from Backstage
+                - VM/node metrics
+                
+                Context data:
+                {json.dumps(context, indent=2, default=str)}
+                
+                Please:
+                1. Identify the root cause
+                2. Reference relevant documentation from Backstage
+                3. Provide step-by-step remediation
+                4. Check if this is a known issue (check runbooks)
+                """
+            }]
+        )
+        
+        return self._process_response(response, context)
+    
+    def _get_all_tools(self):
+        """Combine all tool definitions"""
+        return [
+            # K8s tools
+            {
+                "name": "kubectl_exec",
+                "description": "Execute kubectl commands",
+                "input_schema": {...}
+            },
+            # LGTM tools
+            {
+                "name": "query_loki",
+                "description": "Query Loki logs",
+                "input_schema": {...}
+            },
+            {
+                "name": "query_prometheus",
+                "description": "Query Prometheus metrics",
+                "input_schema": {...}
+            },
+            {
+                "name": "query_tempo",
+                "description": "Query Tempo traces",
+                "input_schema": {...}
+            },
+            # Backstage tools
+            {
+                "name": "search_backstage",
+                "description": "Search Backstage catalog and docs",
+                "input_schema": {...}
+            },
+            {
+                "name": "get_runbook",
+                "description": "Get service runbook",
+                "input_schema": {...}
+            },
+            # VM tools
+            {
+                "name": "get_vm_metrics",
+                "description": "Get VM/node metrics",
+                "input_schema": {...}
+            }
+        ]
+
+# Usage
+holmes = HolmesUnifiedPlatform()
+result = holmes.investigate_incident('payment-service-abc123', 'production')
+print(result)
+```
+
+---
+
+## **6. Deployment Checklist**
+
+```yaml
+✅ Kubernetes Access:
+  □ ServiceAccount created
+  □ ClusterRole with appropriate permissions
+  □ ClusterRoleBinding configured
+  □ Multi-cluster kubeconfigs (if needed)
+
+✅ VM Access:
+  □ Node exporter on all VMs
+  □ Promtail for log shipping
+  □ VM metrics in Prometheus
+  □ Custom agent deployed (optional)
+
+✅ LGTM Stack:
+  □ Loki URL configured
+  □ Grafana API token created
+  □ Tempo endpoint configured
+  □ Prometheus/Mimir accessible
+  □ Authentication secrets created
+
+✅ Backstage:
+  □ API token generated
+  □ Catalog API accessible
+  □ TechDocs indexed
+  □ Service annotations added
+  □ Runbooks linked
+
+✅ Network:
+  □ Service mesh compatible
+  □ Network policies allow traffic
+  □ DNS resolution working
+  □ TLS certificates (if required)
+
+✅ Security:
+  □ Secrets stored securely
+  □ RBAC least privilege
+  □ Audit logging enabled
+  □ Data sanitization configured
+```
+
+---
+
+## **7. Testing the Integration**
+
+```bash
+# Test K8s access
+kubectl exec -it holmesgpt-xxx -- holmes ask "show me failing pods in production"
+
+# Test LGTM access
+kubectl exec -it holmesgpt-xxx -- holmes ask "show me error logs from payment-service in the last hour"
+
+# Test Backstage access
+kubectl exec -it holmesgpt-xxx -- holmes ask "find the runbook for payment-service"
+
+# Test VM access
+kubectl exec -it holmesgpt-xxx -- holmes ask "check CPU usage on node-01"
+
+# Full integration test
+kubectl exec -it holmesgpt-xxx -- holmes ask "investigate why payment-service pod is crashing, check logs, metrics, and consult the runbook"
+```
+
+This setup gives HolmesGPT complete visibility across your entire infrastructure! 🎯
+
+
+
+u
+
+
+...............
+
+## Complete HolmesGPT + Grafana Integration Guide
+
+Here's a comprehensive guide to integrate HolmesGPT with Grafana for enhanced observability and troubleshooting.
+
+---
+
+## **Integration Architecture**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    HolmesGPT                            │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Claude API / LLM                                │   │
+│  └──────────────────────────────────────────────────┘   │
+│                       ↕                                 │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Grafana Connector                               │   │
+│  │  - Dashboards API                                │   │
+│  │  - Data Source Proxy                             │   │
+│  │  - Alerting API                                  │   │
+│  │  - Annotations API                               │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────┬───────────────────────────────────┘
+                      │
+                      ▼
+         ┌────────────────────────┐
+         │      Grafana           │
+         │  ┌──────────────────┐  │
+         │  │  Dashboards      │  │
+         │  ├──────────────────┤  │
+         │  │  Prometheus DS   │  │
+         │  ├──────────────────┤  │
+         │  │  Loki DS         │  │
+         │  ├──────────────────┤  │
+         │  │  Tempo DS        │  │
+         │  ├──────────────────┤  │
+         │  │  Alerts          │  │
+         │  └──────────────────┘  │
+         └────────────────────────┘
+```
+
+---
+
+## **1. Prerequisites**
+
+### **Create Grafana API Token**
+
+```bash
+# In Grafana UI:
+# 1. Go to Configuration → API Keys (or Service Accounts in newer versions)
+# 2. Click "Add API key" / "Add service account token"
+# 3. Name: "holmesgpt-integration"
+# 4. Role: "Viewer" (minimum) or "Editor" (for annotations)
+# 5. Copy the token
+
+# Or via API:
+curl -X POST http://admin:admin@grafana.monitoring.svc.cluster.local:3000/api/auth/keys \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "holmesgpt",
+    "role": "Viewer",
+    "secondsToLive": 31536000
+  }'
+```
+
+### **Store API Token in Kubernetes Secret**
+
+```yaml
+# grafana-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-credentials
+  namespace: holmesgpt
+type: Opaque
+stringData:
+  api-token: glsa_your_grafana_api_token_here
+  url: http://grafana.monitoring.svc.cluster.local:3000
+  username: admin  # Optional, for basic auth
+  password: admin  # Optional, for basic auth
+```
+
+```bash
+kubectl apply -f grafana-secret.yaml
+```
+
+---
+
+## **2. HolmesGPT Configuration for Grafana**
+
+### **Option A: Environment Variables (Simple)**
+
+```yaml
+# holmesgpt-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmesgpt
+  namespace: holmesgpt
+spec:
+  template:
+    spec:
+      containers:
+        - name: holmesgpt
+          image: ghcr.io/robusta-dev/holmesgpt:latest
+          env:
+            # Grafana Configuration
+            - name: GRAFANA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-credentials
+                  key: url
+            
+            - name: GRAFANA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-credentials
+                  key: api-token
+            
+            # Enable Grafana integration
+            - name: ENABLE_GRAFANA_INTEGRATION
+              value: "true"
+            
+            # Optional: Grafana organization ID
+            - name: GRAFANA_ORG_ID
+              value: "1"
+```
+
+### **Option B: ConfigMap (Advanced)**
+
+```yaml
+# grafana-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: holmesgpt-grafana-config
+  namespace: holmesgpt
+data:
+  grafana.yaml: |
+    grafana:
+      enabled: true
+      url: http://grafana.monitoring.svc.cluster.local:3000
+      
+      # Authentication
+      auth:
+        method: token  # or 'basic'
+        token_secret: grafana-credentials
+        token_key: api-token
+      
+      # Organization settings
+      organization:
+        id: 1
+        name: "Main Org"
+      
+      # Features to enable
+      features:
+        dashboards: true
+        annotations: true
+        alerts: true
+        datasources: true
+        explore: true
+      
+      # Data sources to query
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          uid: prometheus-uid
+          enabled: true
+        
+        - name: Loki
+          type: loki
+          uid: loki-uid
+          enabled: true
+        
+        - name: Tempo
+          type: tempo
+          uid: tempo-uid
+          enabled: true
+      
+      # Dashboards to index
+      dashboards:
+        - uid: kubernetes-cluster
+          title: "Kubernetes Cluster Monitoring"
+          folder: "Kubernetes"
+          tags: ["kubernetes", "monitoring"]
+        
+        - uid: pod-overview
+          title: "Kubernetes Pod Overview"
+          folder: "Kubernetes"
+          tags: ["kubernetes", "pods"]
+        
+        - uid: node-exporter
+          title: "Node Exporter Full"
+          folder: "Infrastructure"
+          tags: ["nodes", "hardware"]
+      
+      # Query settings
+      query:
+        timeout: 30s
+        max_datapoints: 1000
+        
+      # Cache settings
+      cache:
+        enabled: true
+        ttl: 300  # 5 minutes
+        
+      # Rate limiting
+      rate_limit:
+        requests_per_minute: 60
+
+---
+# Mount in deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmesgpt
+spec:
+  template:
+    spec:
+      containers:
+        - name: holmesgpt
+          volumeMounts:
+            - name: grafana-config
+              mountPath: /etc/holmesgpt/grafana
+              readOnly: true
+      
+      volumes:
+        - name: grafana-config
+          configMap:
+            name: holmesgpt-grafana-config
+```
+
+---
+
+## **3. Custom Grafana Integration Code**
+
+### **Python Integration Library**
+
+```python
+# grafana_integration.py
+# Custom integration for HolmesGPT to query Grafana
+
+import requests
+import json
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+
+class GrafanaIntegration:
+    def __init__(self, url: str, api_token: str, org_id: int = 1):
+        self.url = url.rstrip('/')
+        self.api_token = api_token
+        self.org_id = org_id
+        self.headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json',
+            'X-Grafana-Org-Id': str(org_id)
+        }
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+    
+    # ==================== DATASOURCE QUERIES ====================
+    
+    def query_prometheus(self, query: str, start_time: datetime = None, 
+                        end_time: datetime = None, step: str = '15s') -> Dict:
+        """Query Prometheus data source through Grafana"""
+        if not start_time:
+            start_time = datetime.now() - timedelta(hours=1)
+        if not end_time:
+            end_time = datetime.now()
+        
+        # Get Prometheus datasource
+        datasources = self.get_datasources(type_filter='prometheus')
+        if not datasources:
+            raise Exception("No Prometheus datasource found")
+        
+        ds_uid = datasources[0]['uid']
+        
+        payload = {
+            'queries': [{
+                'refId': 'A',
+                'expr': query,
+                'datasource': {'type': 'prometheus', 'uid': ds_uid},
+                'intervalMs': 15000,
+                'maxDataPoints': 1000
+            }],
+            'from': str(int(start_time.timestamp() * 1000)),
+            'to': str(int(end_time.timestamp() * 1000))
+        }
+        
+        response = self.session.post(
+            f"{self.url}/api/ds/query",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def query_loki(self, logql: str, start_time: datetime = None,
+                   end_time: datetime = None, limit: int = 1000) -> Dict:
+        """Query Loki data source through Grafana"""
+        if not start_time:
+            start_time = datetime.now() - timedelta(hours=1)
+        if not end_time:
+            end_time = datetime.now()
+        
+        datasources = self.get_datasources(type_filter='loki')
+        if not datasources:
+            raise Exception("No Loki datasource found")
+        
+        ds_uid = datasources[0]['uid']
+        
+        payload = {
+            'queries': [{
+                'refId': 'A',
+                'expr': logql,
+                'datasource': {'type': 'loki', 'uid': ds_uid},
+                'maxLines': limit
+            }],
+            'from': str(int(start_time.timestamp() * 1000)),
+            'to': str(int(end_time.timestamp() * 1000))
+        }
+        
+        response = self.session.post(
+            f"{self.url}/api/ds/query",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def query_tempo(self, trace_id: str = None, service_name: str = None) -> Dict:
+        """Query Tempo data source through Grafana"""
+        datasources = self.get_datasources(type_filter='tempo')
+        if not datasources:
+            raise Exception("No Tempo datasource found")
+        
+        ds_uid = datasources[0]['uid']
+        
+        if trace_id:
+            # Direct trace lookup
+            response = self.session.get(
+                f"{self.url}/api/datasources/proxy/{ds_uid}/api/traces/{trace_id}"
+            )
+        elif service_name:
+            # Search traces
+            payload = {
+                'queries': [{
+                    'refId': 'A',
+                    'queryType': 'traceql',
+                    'query': f'{{ service.name="{service_name}" }}',
+                    'datasource': {'type': 'tempo', 'uid': ds_uid},
+                    'limit': 20
+                }],
+                'from': str(int((datetime.now() - timedelta(hours=1)).timestamp() * 1000)),
+                'to': str(int(datetime.now().timestamp() * 1000))
+            }
+            
+            response = self.session.post(
+                f"{self.url}/api/ds/query",
+                json=payload
+            )
+        
+        response.raise_for_status()
+        return response.json()
+    
+    # ==================== DATASOURCES ====================
+    
+    def get_datasources(self, type_filter: str = None) -> List[Dict]:
+        """List all datasources"""
+        response = self.session.get(f"{self.url}/api/datasources")
+        response.raise_for_status()
+        
+        datasources = response.json()
+        
+        if type_filter:
+            datasources = [ds for ds in datasources if ds['type'] == type_filter]
+        
+        return datasources
+    
+    # ==================== DASHBOARDS ====================
+    
+    def search_dashboards(self, query: str = "", tags: List[str] = None,
+                         folder_ids: List[int] = None) -> List[Dict]:
+        """Search for dashboards"""
+        params = {'query': query}
+        
+        if tags:
+            params['tag'] = tags
+        if folder_ids:
+            params['folderIds'] = folder_ids
+        
+        response = self.session.get(
+            f"{self.url}/api/search",
+            params=params
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def get_dashboard_by_uid(self, uid: str) -> Dict:
+        """Get dashboard by UID"""
+        response = self.session.get(f"{self.url}/api/dashboards/uid/{uid}")
+        response.raise_for_status()
+        return response.json()
+    
+    def get_dashboard_panels(self, uid: str) -> List[Dict]:
+        """Extract panels from a dashboard"""
+        dashboard = self.get_dashboard_by_uid(uid)
+        return dashboard.get('dashboard', {}).get('panels', [])
+    
+    def get_panel_queries(self, uid: str, panel_id: int) -> List[Dict]:
+        """Get queries from a specific panel"""
+        panels = self.get_dashboard_panels(uid)
+        
+        for panel in panels:
+            if panel.get('id') == panel_id:
+                return panel.get('targets', [])
+        
+        return []
+    
+    # ==================== ALERTS ====================
+    
+    def get_alerts(self, state: str = None, dashboard_uid: str = None) -> List[Dict]:
+        """Get alert rules"""
+        params = {}
+        if state:
+            params['state'] = state  # 'alerting', 'ok', 'paused', etc.
+        if dashboard_uid:
+            params['dashboardUID'] = dashboard_uid
+        
+        response = self.session.get(
+            f"{self.url}/api/alerts",
+            params=params
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    def get_alert_history(self, dashboard_uid: str = None, 
+                         panel_id: int = None, limit: int = 100) -> List[Dict]:
+        """Get alert state history"""
+        params = {'limit': limit}
+        
+        if dashboard_uid:
+            params['dashboardUID'] = dashboard_uid
+        if panel_id:
+            params['panelId'] = panel_id
+        
+        response = self.session.get(
+            f"{self.url}/api/annotations",
+            params=params
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    # ==================== ANNOTATIONS ====================
+    
+    def create_annotation(self, text: str, tags: List[str] = None,
+                         dashboard_uid: str = None, panel_id: int = None,
+                         time_start: datetime = None, time_end: datetime = None) -> Dict:
+        """Create an annotation (requires Editor role)"""
+        if not time_start:
+            time_start = datetime.now()
+        
+        payload = {
+            'text': text,
+            'tags': tags or [],
+            'time': int(time_start.timestamp() * 1000)
+        }
+        
+        if time_end:
+            payload['timeEnd'] = int(time_end.timestamp() * 1000)
+        if dashboard_uid:
+            payload['dashboardUID'] = dashboard_uid
+        if panel_id:
+            payload['panelId'] = panel_id
+        
+        response = self.session.post(
+            f"{self.url}/api/annotations",
+            json=payload
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    # ==================== EXPLORE ====================
+    
+    def get_explore_url(self, datasource_uid: str, query: str,
+                       start_time: datetime = None, end_time: datetime = None) -> str:
+        """Generate Explore URL for a query"""
+        if not start_time:
+            start_time = datetime.now() - timedelta(hours=1)
+        if not end_time:
+            end_time = datetime.now()
+        
+        # Create Explore URL
+        from urllib.parse import urlencode, quote
+        
+        left = {
+            'datasource': datasource_uid,
+            'queries': [{'expr': query, 'refId': 'A'}],
+            'range': {
+                'from': start_time.isoformat(),
+                'to': end_time.isoformat()
+            }
+        }
+        
+        params = {
+            'orgId': self.org_id,
+            'left': json.dumps(left)
+        }
+        
+        return f"{self.url}/explore?{urlencode(params)}"
+    
+    # ==================== HELPER METHODS ====================
+    
+    def correlate_incident(self, pod_name: str, namespace: str,
+                          start_time: datetime = None) -> Dict:
+        """Correlate metrics, logs, and traces for an incident"""
+        if not start_time:
+            start_time = datetime.now() - timedelta(hours=1)
+        
+        end_time = datetime.now()
+        
+        # Query metrics
+        cpu_query = f'rate(container_cpu_usage_seconds_total{{namespace="{namespace}", pod=~"{pod_name}.*"}}[5m])'
+        memory_query = f'container_memory_usage_bytes{{namespace="{namespace}", pod=~"{pod_name}.*"}}'
+        
+        metrics = {
+            'cpu': self.query_prometheus(cpu_query, start_time, end_time),
+            'memory': self.query_prometheus(memory_query, start_time, end_time)
+        }
+        
+        # Query logs
+        log_query = f'{{namespace="{namespace}", pod=~"{pod_name}.*"}} |~ "error|failed|exception"'
+        logs = self.query_loki(log_query, start_time, end_time, limit=100)
+        
+        # Query traces (extract service name from pod name)
+        service_name = pod_name.split('-')[0]
+        try:
+            traces = self.query_tempo(service_name=service_name)
+        except:
+            traces = None
+        
+        return {
+            'metrics': metrics,
+            'logs': logs,
+            'traces': traces,
+            'grafana_links': {
+                'explore_logs': self.get_explore_url(
+                    'loki-uid',
+                    log_query,
+                    start_time,
+                    end_time
+                ),
+                'explore_metrics': self.get_explore_url(
+                    'prometheus-uid',
+                    cpu_query,
+                    start_time,
+                    end_time
+                )
+            }
+        }
+    
+    def get_relevant_dashboards(self, keywords: List[str]) -> List[Dict]:
+        """Find dashboards relevant to an investigation"""
+        results = []
+        
+        for keyword in keywords:
+            dashboards = self.search_dashboards(query=keyword)
+            results.extend(dashboards)
+        
+        # Deduplicate by UID
+        seen = set()
+        unique_dashboards = []
+        
+        for dashboard in results:
+            if dashboard['uid'] not in seen:
+                seen.add(dashboard['uid'])
+                unique_dashboards.append(dashboard)
+        
+        return unique_dashboards
+
+# Example usage
+if __name__ == "__main__":
+    grafana = GrafanaIntegration(
+        url="http://grafana.monitoring.svc.cluster.local:3000",
+        api_token="glsa_xxx"
+    )
+    
+    # Correlate an incident
+    incident_data = grafana.correlate_incident(
+        pod_name="payment-service-abc123",
+        namespace="production"
+    )
+    
+    print(json.dumps(incident_data, indent=2))
+```
+
+---
+
+## **4. HolmesGPT Tool Definitions for Grafana**
+
+```python
+# holmes_grafana_tools.py
+# Tool definitions for Claude to use Grafana
+
+grafana_tools = [
+    {
+        "name": "query_grafana_prometheus",
+        "description": "Query Prometheus metrics through Grafana. Use PromQL syntax.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "PromQL query string (e.g., 'rate(http_requests_total[5m])')"
+                },
+                "time_range": {
+                    "type": "string",
+                    "description": "Time range (e.g., '1h', '24h', '7d')",
+                    "default": "1h"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "query_grafana_loki",
+        "description": "Query logs from Loki through Grafana. Use LogQL syntax.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "LogQL query string (e.g., '{namespace=\"production\"} |= \"error\"')"
+                },
+                "time_range": {
+                    "type": "string",
+                    "description": "Time range (e.g., '1h', '24h')",
+                    "default": "1h"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of log lines to return",
+                    "default": 100
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "search_grafana_dashboards",
+        "description": "Search for Grafana dashboards by keyword or tags",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query (dashboard title or keyword)"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by tags (e.g., ['kubernetes', 'monitoring'])"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "get_grafana_dashboard",
+        "description": "Get details of a specific Grafana dashboard by UID",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dashboard_uid": {
+                    "type": "string",
+                    "description": "Dashboard UID from search results"
+                }
+            },
+            "required": ["dashboard_uid"]
+        }
+    },
+    {
+        "name": "get_grafana_alerts",
+        "description": "Get current alerts from Grafana",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "state": {
+                    "type": "string",
+                    "enum": ["alerting", "ok", "paused", "pending"],
+                    "description": "Filter by alert state"
+                }
+            }
+        }
+    },
+    {
+        "name": "create_grafana_annotation",
+        "description": "Create an annotation in Grafana to mark an event (requires Editor role)",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Annotation text"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for the annotation"
+                },
+                "dashboard_uid": {
+                    "type": "string",
+                    "description": "Optional: Dashboard UID to attach annotation to"
+                }
+            },
+            "required": ["text"]
+        }
+    },
+    {
+        "name": "correlate_incident_grafana",
+        "description": "Correlate metrics, logs, and traces for a Kubernetes pod incident using Grafana data sources",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pod_name": {
+                    "type": "string",
+                    "description": "Name of the pod"
+                },
+                "namespace": {
+                    "type": "string",
+                    "description": "Kubernetes namespace"
+                },
+                "time_range": {
+                    "type": "string",
+                    "description": "How far back to look (e.g., '1h', '6h')",
+                    "default": "1h"
+                }
+            },
+            "required": ["pod_name", "namespace"]
+        }
+    }
+]
+```
+
+---
+
+## **5. Integration with HolmesGPT Main Loop**
+
+```python
+# holmes_main.py
+# Main HolmesGPT orchestrator with Grafana integration
+
+import anthropic
+from grafana_integration import GrafanaIntegration
+from datetime import datetime, timedelta
+import json
+
+class HolmesGPT:
+    def __init__(self, anthropic_key: str, grafana_url: str, grafana_token: str):
+        self.claude = anthropic.Anthropic(api_key=anthropic_key)
+        self.grafana = GrafanaIntegration(grafana_url, grafana_token)
+        self.conversation_history = []
+    
+    def investigate(self, user_query: str) -> str:
+        """Main investigation loop"""
+        
+        # Add user query to conversation
+        self.conversation_history.append({
+            "role": "user",
+            "content": user_query
+        })
+        
+        # Call Claude with Grafana tools
+        response = self.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            tools=self._get_grafana_tools(),
+            messages=self.conversation_history
+        )
+        
+        # Process response and handle tool calls
+        return self._process_response(response)
+    
+    def _get_grafana_tools(self):
+        """Return Grafana tool definitions"""
+        from holmes_grafana_tools import grafana_tools
+        return grafana_tools
+    
+    def _process_response(self, response):
+        """Process Claude's response and handle tool calls"""
+        
+        # Add assistant response to history
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": response.content
+        })
+        
+        # Check if Claude wants to use tools
+        if response.stop_reason == "tool_use":
+            tool_results = []
+            
+            for block in response.content:
+                if block.type == "tool_use":
+                    # Execute the tool
+                    result = self._execute_tool(block.name, block.input)
+                    
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(result)
+                    })
+            
+            # Add tool results to conversation
+            self.conversation_history.append({
+                "role": "user",
+                "content": tool_results
+            })
+            
+            # Continue conversation with tool results
+            follow_up = self.claude.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                tools=self._get_grafana_tools(),
+                messages=self.conversation_history
+            )
+            
+            return self._process_response(follow_up)
+        
+        # Extract final text response
+        final_response = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                final_response += block.text
+        
+        return final_response
+    
+    def _execute_tool(self, tool_name: str, tool_input: dict):
+        """Execute Grafana tool"""
+        
+        if tool_name == "query_grafana_prometheus":
+            time_range = tool_input.get('time_range', '1h')
+            hours = int(time_range.rstrip('h'))
+            start_time = datetime.now() - timedelta(hours=hours)
+            
+            return self.grafana.query_prometheus(
+                query=tool_input['query'],
+                start_time=start_time
+            )
+        
+        elif tool_name == "query_grafana_loki":
+            time_range = tool_input.get('time_range', '1h')
+            hours = int(time_range.rstrip('h'))
+            start_time = datetime.now() - timedelta(hours=hours)
+            
+            return self.grafana.query_loki(
+                logql=tool_input['query'],
+                start_time=start_time,
+                limit=tool_input.get('limit', 100)
+            )
+        
+        elif tool_name == "search_grafana_dashboards":
+            return self.grafana.search_dashboards(
+                query=tool_input['query'],
+                tags=tool_input.get('tags')
+            )
+        
+        elif tool_name == "get_grafana_dashboard":
+            return self.grafana.get_dashboard_by_uid(
+                uid=tool_input['dashboard_uid']
+            )
+        
+        elif tool_name == "get_grafana_alerts":
+            return self.grafana.get_alerts(
+                state=tool_input.get('state')
+            )
+        
+        elif tool_name == "create_grafana_annotation":
+            return self.grafana.create_annotation(
+                text=tool_input['text'],
+                tags=tool_input.get('tags'),
+                dashboard_uid=tool_input.get('dashboard_uid')
+            )
+        
+        elif tool_name == "correlate_incident_grafana":
+            time_range = tool_input.get('time_range', '1h')
+            hours = int(time_range.rstrip('h'))
+            start_time = datetime.now() - timedelta(hours=hours)
+            
+            return self.grafana.correlate_incident(
+                pod_name=tool_input['pod_name'],
+                namespace=tool_input['namespace'],
+                start_time=start_time
+            )
+        
+        return {"error": f"Unknown tool: {tool_name}"}
+
+# Usage example
+if __name__ == "__main__":
+    holmes = HolmesGPT(
+        anthropic_key="sk-ant-xxx",
+        grafana_url="http://grafana.monitoring.svc.cluster.local:3000",
+        grafana_token="glsa_xxx"
+    )
+    
+    # Investigate an incident
+    result = holmes.investigate(
+        "The payment-service pod in production namespace is crashing. "
+        "Check logs and metrics from Grafana."
+    )
+    
+    print(result)
+```
+
+---
+
+## **6. Grafana Webhook for Auto-Investigation**
+
+### **Configure Grafana to Call HolmesGPT on Alerts**
+
+```yaml
+# grafana-contact-point.yaml
+# Add this contact point in Grafana Alerting
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: holmesgpt-webhook
+    receivers:
+      - uid: holmesgpt
+        type: webhook
+        settings:
+          url: http://holmesgpt.holmesgpt.svc.cluster.local:8080/webhook/grafana-alert
+          httpMethod: POST
+          maxAlerts: 10
+```
+
+### **HolmesGPT Webhook Handler**
+
+```python
+# holmes_webhook.py
+# FastAPI webhook handler for Grafana alerts
+
+from fastapi import FastAPI, Request
+import json
+from holmes_main import HolmesGPT
+
+app = FastAPI()
+
+holmes = HolmesGPT(
+    anthropic_key="sk-ant-xxx",
+    grafana_url="http://grafana.monitoring.svc.cluster.local:3000",
+    grafana_token="glsa_xxx"
+)
+
+@app.post("/webhook/grafana-alert")
+async def grafana_alert_webhook(request: Request):
+    """Handle Grafana alert webhooks"""
+    
+    payload = await request.json()
+    
+    # Extract alert information
+    alerts = payload.get('alerts', [])
+    
+    for alert in alerts:
+        if alert['status'] == 'firing':
+            # Auto-investigate
+            alert_name = alert['labels'].get('alertname', 'Unknown')
+            namespace = alert['labels'].get('namespace', '')
+            pod = alert['labels'].get('pod', '')
+            
+            query = f"""
+            Alert '{alert_name}' is firing.
+            Namespace: {namespace}
+            Pod: {pod}
+            
+            Alert details:
+            {json.dumps(alert, indent=2)}
+            
+            Please investigate this alert using Grafana data sources.
+            Check logs, metrics, and provide root cause analysis.
+            """
+            
+            result = holmes.investigate(query)
+            
+            # Create annotation in Grafana
+            holmes.grafana.create_annotation(
+                text=f"HolmesGPT Investigation:\n\n{result}",
+                tags=['holmesgpt', 'auto-investigation', alert_name],
+                dashboard_uid=alert.get('dashboardUID')
+            )
+            
+            # Could also send to Slack, create ticket, etc.
+            print(f"Investigation complete for {alert_name}")
+            print(result)
+    
+    return {"status": "processed"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
+```
+
+---
+
+## **7. Complete Deployment**
+
+```yaml
+# complete-deployment.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: holmesgpt
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: holmesgpt-secrets
+  namespace: holmesgpt
+type: Opaque
+stringData:
+  anthropic-api-key: sk-ant-your-key-here
+  grafana-api-token: glsa_your_grafana_token_here
+  grafana-url: http://grafana.monitoring.svc.cluster.local:3000
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: holmesgpt-config
+  namespace: holmesgpt
+data:
+  config.yaml: |
+    grafana:
+      enabled: true
+      datasources:
+        - prometheus
+        - loki
+        - tempo
+      features:
+        - dashboards
+        - alerts
+        - annotations
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmesgpt
+  namespace: holmesgpt
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: holmesgpt
+  template:
+    metadata:
+      labels:
+        app: holmesgpt
+    spec:
+      serviceAccountName: holmesgpt
+      containers:
+        - name: holmesgpt
+          image: ghcr.io/robusta-dev/holmesgpt:latest
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: holmesgpt-secrets
+                  key: anthropic-api-key
+            
+            - name: GRAFANA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: holmesgpt-secrets
+                  key: grafana-url
+            
+            - name: GRAFANA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: holmesgpt-secrets
+                  key: grafana-api-token
+          
+          ports:
+            - containerPort: 8080
+              name: http
+          
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          
+          volumeMounts:
+            - name: config
+              mountPath: /etc/holmesgpt
+              readOnly: true
+      
+      volumes:
+        - name: config
+          configMap:
+            name: holmesgpt-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: holmesgpt
+  namespace: holmesgpt
+spec:
+  selector:
+    app: holmesgpt
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  type: ClusterIP
+```
+
+---
+
+## **8. Testing the Integration**
+
+```bash
+# Test 1: Query Prometheus through Grafana
+curl -X POST http://holmesgpt.holmesgpt.svc.cluster.local:8080/api/investigate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Show me CPU usage for pods in production namespace from Grafana"
+  }'
+
+# Test 2: Query Loki logs
+curl -X POST http://holmesgpt.holmesgpt.svc.cluster.local:8080/api/investigate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Get error logs from payment-service in the last hour using Grafana Loki"
+  }'
+
+# Test 3: Correlate incident
+curl -X POST http://holmesgpt.holmesgpt.svc.cluster.local:8080/api/investigate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Investigate why payment-service-abc123 pod crashed, check Grafana for logs and metrics"
+  }'
+
+# Test 4: Search dashboards
+curl -X POST http://holmesgpt.holmesgpt.svc.cluster.local:8080/api/investigate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Find Kubernetes monitoring dashboards in Grafana"
+  }'
+```
+
+---
+
+## **9. Integration Checklist**
+
+```yaml
+✅ Grafana Setup:
+  □ API token created (Viewer or Editor role)
+  □ Token stored in Kubernetes secret
+  □ Grafana URL accessible from HolmesGPT pod
+  □ Network policy allows traffic
+
+✅ Data Sources:
+  □ Prometheus configured in Grafana
+  □ Loki configured in Grafana
+  □ Tempo configured in Grafana (optional)
+  □ Data source UIDs documented
+
+✅ HolmesGPT Configuration:
+  □ Grafana integration enabled
+  □ Environment variables set
+  □ Tool definitions loaded
+  □ Webhook handler deployed (optional)
+
+✅ Permissions:
+  □ Viewer role (minimum) for queries
+  □ Editor role (for annotations)
+  □ Service account configured
+
+✅ Testing:
+  □ Prometheus queries working
+  □ Loki queries working
+  □ Dashboard search working
+  □ Alert integration working
+  □ Annotation creation working
+
+✅ Monitoring:
+  □ Holmes metrics exposed
+  □ Grafana API rate limits monitored
+  □ Error handling configured
+  □ Logs aggregated
+```
+
+This gives HolmesGPT full access to your Grafana observability stack! 🎯
