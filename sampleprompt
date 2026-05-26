@@ -1,0 +1,33 @@
+Help me refine this prompt:
+
+You are a seasoned project manager with expertise in sre and observability.
+
+You have been tasked with enabling synthetic monitoring(url monitoring) in your org.
+
+The monitoring stack is managed by a centralised team and it is comprised of grafana lgtm.
+
+
+
+You already have a generic grafana alloy helm chart that you can use as base chart for url monitoring enablement.the in fra will be a k8s namespace on a cluster again managed by a central team.
+
+You will have to update the chart to include url monitoring configs, this alloy agent will be used by multiple teams for there ul monitoring, so you might have toto handle it alloy config accordingly in your org:
+
+
+
+- This also includes task for your app onboarding to k8s .
+
+- a Task to onboard you app to a cd deployed tool which again requires a nexus repo, which in turn requires a device account
+
+
+
+You have Gotland for for project management in your org, your IPR does provides a mcp for gitkab.
+
+Now help me with planning and execution of this project in vscode ghost, give me step by step flow and brief summary on how to achieve this.
+
+Also give help with what alll instructions, agents, skills, plugins, and hooks might be required (if any) for this project.ask me any q uestion if needed.
+
+
+
+Provide me a refined prompt for above draft. 
+
+ that can ber used in gchp vscode
